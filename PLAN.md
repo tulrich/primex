@@ -106,6 +106,19 @@ than discrete jumps.
     zoom still visually anchors to a fixed corner (whichever child the
     camera is about to descend into), not to wherever your fingers are —
     revisit if it feels wrong in practice.
-[ ] Add inertia on top of step 2's interaction.
+[ ] Add inertia on top of step 2's interaction, plus real rubber-band
+    overshoot at the root/min-zoom boundary (a small bounce past the edge
+    that eases back to zero on release) — folded in here rather than
+    built separately, since both need the same live animation loop.
+    Interim fix already in place: `dampPanDelta`/`dampZoomDelta` in
+    camera.ts scale an input delta by the current distance from the edge
+    (`frac`/`zoomFrac`), so drifting back toward the boundary decelerates
+    smoothly. It has a real gap the rubber-band work should close: sitting
+    exactly at the edge (frac=0, e.g. the untouched default view), that
+    scaling factor is 0, so the very first pixel of a boundary-ward drag
+    is still fully absorbed rather than giving a little.
+    Also added: single-finger vertical drag now zooms (up = in, matching
+    the layout's own "up = finer generations"), combined with horizontal
+    pan in the same gesture — mirrors how pinch already combines both.
 [ ] Add the tile cache + compositing for performance.
 [ ] Iterate: placeholder fade-in, edge clamping polish, tune inertia feel.

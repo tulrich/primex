@@ -1,5 +1,14 @@
 import {describe, expect, it} from 'vitest';
-import {makeCamera, panBy, zoomBy, MIN_ORIGIN, MIN_BOTTOM_GEN, type Camera} from './camera';
+import {
+  makeCamera,
+  panBy,
+  zoomBy,
+  dampPanDelta,
+  dampZoomDelta,
+  MIN_ORIGIN,
+  MIN_BOTTOM_GEN,
+  type Camera,
+} from './camera';
 
 describe('panBy', () => {
   it('accumulates frac without touching origin within a cell', () => {
@@ -99,5 +108,49 @@ describe('zoomBy', () => {
     expect(oneShot.origin).toBe(stepwise.origin);
     expect(oneShot.bottomGen).toBe(stepwise.bottomGen);
     expect(oneShot.frac).toBeCloseTo(stepwise.frac, 9);
+  });
+});
+
+describe('dampPanDelta', () => {
+  it('passes rightward deltas through unchanged, anywhere', () => {
+    expect(dampPanDelta(makeCamera(MIN_ORIGIN), 0.3)).toBe(0.3);
+    expect(dampPanDelta({...makeCamera(50n), frac: 0.9}, 0.3)).toBe(0.3);
+  });
+
+  it('passes leftward deltas through unchanged away from the root', () => {
+    const c = {...makeCamera(50n), frac: 0.4};
+    expect(dampPanDelta(c, -0.3)).toBe(-0.3);
+  });
+
+  it('damps leftward deltas at the root in proportion to frac', () => {
+    const near = dampPanDelta({...makeCamera(MIN_ORIGIN), frac: 0.1}, -0.5);
+    const far = dampPanDelta({...makeCamera(MIN_ORIGIN), frac: 0.9}, -0.5);
+    expect(near).toBeCloseTo(-0.05, 9); // -0.5 * 0.1
+    expect(far).toBeCloseTo(-0.45, 9); // -0.5 * 0.9
+    expect(Math.abs(near)).toBeLessThan(Math.abs(far));
+  });
+
+  it('goes to exactly zero right at the root edge, never overshooting', () => {
+    const atEdge = dampPanDelta(makeCamera(MIN_ORIGIN), -1);
+    expect(atEdge).toBeCloseTo(0, 9);
+    const result = panBy(makeCamera(MIN_ORIGIN), atEdge);
+    expect(result.origin).toBe(MIN_ORIGIN);
+    expect(result.frac).toBe(0);
+  });
+});
+
+describe('dampZoomDelta', () => {
+  it('passes zoom-in deltas through unchanged, anywhere', () => {
+    expect(dampZoomDelta(makeCamera(MIN_ORIGIN, MIN_BOTTOM_GEN), 0.4)).toBe(0.4);
+  });
+
+  it('passes zoom-out deltas through unchanged away from the min generation', () => {
+    const c = {...makeCamera(50n, 10), zoomFrac: 0.4};
+    expect(dampZoomDelta(c, -0.3)).toBe(-0.3);
+  });
+
+  it('damps zoom-out deltas at the min generation in proportion to zoomFrac', () => {
+    const c = {...makeCamera(MIN_ORIGIN, MIN_BOTTOM_GEN), zoomFrac: 0.2};
+    expect(dampZoomDelta(c, -0.5)).toBeCloseTo(-0.1, 9); // -0.5 * 0.2
   });
 });

@@ -53,6 +53,31 @@ export function panBy(camera: Camera, dFrac: number): Camera {
   return {...camera, origin, frac};
 }
 
+/**
+ * Damps an input delta that would push further past a hard boundary
+ * (root pan, or min zoom-out), so hitting the edge decelerates smoothly
+ * instead of stopping dead. Has no effect anywhere else — this only
+ * matters in the boundary cell/generation itself, where `frac`/`zoomFrac`
+ * already measures distance from the true edge (0 = at the edge, 1 = a
+ * full cell/generation away from it), which is exactly the damping factor
+ * we want: the closer to the edge, the more a further push is absorbed.
+ * Callers apply this to a raw input delta before passing it to panBy /
+ * zoomBy, so it works the same for drag, wheel, and pinch alike.
+ */
+export function dampPanDelta(camera: Camera, dFrac: number): number {
+  if (dFrac < 0 && camera.origin <= MIN_ORIGIN) {
+    return dFrac * camera.frac;
+  }
+  return dFrac;
+}
+
+export function dampZoomDelta(camera: Camera, dZoom: number): number {
+  if (dZoom < 0 && camera.bottomGen <= MIN_BOTTOM_GEN) {
+    return dZoom * camera.zoomFrac;
+  }
+  return dZoom;
+}
+
 const MAX_ZOOM_STEPS_PER_CALL = 200;
 
 /**

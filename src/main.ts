@@ -1,4 +1,13 @@
-import {makeCamera, panBy, zoomBy, MIN_ORIGIN, MIN_BOTTOM_GEN, type Camera} from './camera';
+import {
+  makeCamera,
+  panBy,
+  zoomBy,
+  dampPanDelta,
+  dampZoomDelta,
+  MIN_ORIGIN,
+  MIN_BOTTOM_GEN,
+  type Camera,
+} from './camera';
 import {CameraRenderer} from './view';
 
 const app = document.querySelector<HTMLDivElement>('#app');
@@ -13,7 +22,7 @@ app.innerHTML = `
     <button id="reset">Reset</button>
   </div>
   <p id="help">
-    Drag to pan. Scroll or pinch to zoom.
+    Drag sideways to pan, up/down to zoom. Pinch or scroll to zoom too.
   </p>
 `;
 
@@ -39,14 +48,25 @@ function draw(): void {
   zoomOutButton.disabled = camera.origin <= MIN_ORIGIN && camera.bottomGen <= MIN_BOTTOM_GEN;
 }
 
-// --- Pan/zoom via pointer events: one active pointer drags (pan only);
-// two active pointers pinch (pan follows the midpoint, zoom follows the
-// change in distance between them). Everything's tracked in units of the
+// --- Pan/zoom via pointer events: one active pointer drags — sideways
+// pans, up/down zooms, both from the same gesture (drag up = zoom in, to
+// match the app's own "up = finer generations" layout). Two active
+// pointers pinch instead: pan follows the midpoint, zoom follows the
+// change in distance between them. Everything's tracked in units of the
 // canvas's own pixel size so it's independent of CSS scaling. ---
+
+function applyPan(dFrac: number): void {
+  camera = panBy(camera, dampPanDelta(camera, dFrac));
+}
+
+function applyZoom(dZoom: number): void {
+  camera = zoomBy(camera, dampZoomDelta(camera, dZoom));
+}
 
 const activePointers = new Map<number, {x: number; y: number}>();
 let dragPointerId: number | null = null;
 let lastDragX = 0;
+let lastDragY = 0;
 let pinchLastDist = 0;
 let pinchLastMidX = 0;
 
@@ -59,7 +79,9 @@ function pinchMetrics(): {dist: number; midX: number} {
 function beginGesture(pointerId: number): void {
   if (activePointers.size === 1) {
     dragPointerId = pointerId;
-    lastDragX = activePointers.get(pointerId)!.x;
+    const p = activePointers.get(pointerId)!;
+    lastDragX = p.x;
+    lastDragY = p.y;
   } else if (activePointers.size === 2) {
     dragPointerId = null;
     ({dist: pinchLastDist, midX: pinchLastMidX} = pinchMetrics());
@@ -89,9 +111,9 @@ canvas.addEventListener('pointermove', (event) => {
   if (activePointers.size >= 2) {
     const {dist, midX} = pinchMetrics();
     if (pinchLastDist > 0) {
-      camera = zoomBy(camera, Math.log2(dist / pinchLastDist));
+      applyZoom(Math.log2(dist / pinchLastDist));
       const dxCanvasPixels = (midX - pinchLastMidX) * canvasPixelsPerCssPixel;
-      camera = panBy(camera, -dxCanvasPixels / (renderer.canvasSize / 2));
+      applyPan(-dxCanvasPixels / (renderer.canvasSize / 2));
     }
     pinchLastDist = dist;
     pinchLastMidX = midX;
@@ -101,9 +123,13 @@ canvas.addEventListener('pointermove', (event) => {
 
   if (dragPointerId === event.pointerId) {
     const dxCanvasPixels = (event.clientX - lastDragX) * canvasPixelsPerCssPixel;
+    const dyCanvasPixels = (event.clientY - lastDragY) * canvasPixelsPerCssPixel;
     lastDragX = event.clientX;
-    // Content follows the pointer: dragging right reveals lower origins.
-    camera = panBy(camera, -dxCanvasPixels / (renderer.canvasSize / 2));
+    lastDragY = event.clientY;
+    // Content follows the pointer: dragging right reveals lower origins;
+    // dragging up zooms in (canvas y grows downward, so negate).
+    applyPan(-dxCanvasPixels / (renderer.canvasSize / 2));
+    applyZoom(-dyCanvasPixels / (renderer.canvasSize / 2));
     draw();
   }
 });
@@ -126,7 +152,7 @@ canvas.addEventListener(
   'wheel',
   (event) => {
     event.preventDefault();
-    camera = zoomBy(camera, -event.deltaY * ZOOM_SPEED);
+    applyZoom(-event.deltaY * ZOOM_SPEED);
     draw();
   },
   {passive: false},
