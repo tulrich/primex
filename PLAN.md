@@ -117,8 +117,40 @@ than discrete jumps.
     exactly at the edge (frac=0, e.g. the untouched default view), that
     scaling factor is 0, so the very first pixel of a boundary-ward drag
     is still fully absorbed rather than giving a little.
-    Also added: single-finger vertical drag now zooms (up = in, matching
-    the layout's own "up = finer generations"), combined with horizontal
-    pan in the same gesture — mirrors how pinch already combines both.
+    Also added: single-finger vertical drag now zooms, combined with
+    horizontal pan in the same gesture — mirrors how pinch already
+    combines both.
+
+### Zoom anchoring (learned the hard way)
+
+The renderer can only scale about the canvas's top-left corner, and that
+is forced, not a preference: `frac' = 2*frac - c` maps the window's LEFT
+edge to the same world point across a zoom rebase, and `bottomGen + 1`
+does the same for the TOP edge. An early version picked the scale anchor
+per-frame (`frac < 0.5 ? left : right` corner), which made the render
+disagree with the rebase — the whole image jumped ~30% of its width the
+instant `frac` crossed 0.5 mid-zoom, and zooming visibly dragged content
+sideways.
+
+To zoom about the cursor/pinch midpoint anyway, the *camera* compensates
+with a pan (`zoomAtAnchor`): the window's width changes by `shrink`
+cells and the left edge absorbs `anchorFracX` of that change before the
+zoom applies. Panning first lets `zoomBy`'s rebase convert `frac` into
+the new generation's units for free. This is what decouples the axes
+perceptually — a pure vertical drag now leaves the point under the
+finger fixed, even though `origin`/`frac` (which track the left edge)
+necessarily keep moving as the window narrows.
+
+Vertical drag direction is content-follows-finger, same as horizontal:
+zooming in scales the pyramid about its top edge, so its content moves
+*down* the screen — therefore drag down = zoom in. Wheel deliberately
+keeps the opposite, standard desktop sense (scroll up = zoom in).
+
+Note for the tile-cache work: camera-state continuity and *rendered*
+continuity are different properties. The corner-flip bug left camera
+state perfectly smooth and only corrupted the render transform, so
+readout-based checks can't see it — it needs a pixel diff under
+sub-pixel input steps (a jump shows as one step changing >50% of pixels
+against a ~2% median).
 [ ] Add the tile cache + compositing for performance.
 [ ] Iterate: placeholder fade-in, edge clamping polish, tune inertia feel.

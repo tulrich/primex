@@ -2,6 +2,7 @@ import {
   makeCamera,
   panBy,
   zoomBy,
+  zoomAtAnchor,
   dampPanDelta,
   dampZoomDelta,
   MIN_ORIGIN,
@@ -22,7 +23,8 @@ app.innerHTML = `
     <button id="reset">Reset</button>
   </div>
   <p id="help">
-    Drag sideways to pan, up/down to zoom. Pinch or scroll to zoom too.
+    Drag sideways to pan, down to zoom in, up to zoom out.
+    Pinch or scroll to zoom too.
   </p>
 `;
 
@@ -59,9 +61,19 @@ function applyPan(dFrac: number): void {
   camera = panBy(camera, dampPanDelta(camera, dFrac));
 }
 
-function applyZoom(dZoom: number): void {
-  camera = zoomBy(camera, dampZoomDelta(camera, dZoom));
+/**
+ * Zooms about `anchorFracX` (0 = left edge of the canvas, 1 = right), so
+ * whatever sits under the cursor/fingers stays put instead of sliding
+ * sideways as the view scales.
+ */
+function applyZoomAt(dZoom: number, anchorFracX: number): void {
+  const damped = dampZoomDelta(camera, dZoom);
+  if (damped === 0) return;
+  camera = zoomAtAnchor(camera, damped, Math.min(1, Math.max(0, anchorFracX)));
 }
+
+/** Vertical drag distance, in canvas pixels, worth one full generation. */
+const ZOOM_DRAG_PIXELS = 256;
 
 const activePointers = new Map<number, {x: number; y: number}>();
 let dragPointerId: number | null = null;
@@ -111,7 +123,7 @@ canvas.addEventListener('pointermove', (event) => {
   if (activePointers.size >= 2) {
     const {dist, midX} = pinchMetrics();
     if (pinchLastDist > 0) {
-      applyZoom(Math.log2(dist / pinchLastDist));
+      applyZoomAt(Math.log2(dist / pinchLastDist), (midX - rect.left) / rect.width);
       const dxCanvasPixels = (midX - pinchLastMidX) * canvasPixelsPerCssPixel;
       applyPan(-dxCanvasPixels / (renderer.canvasSize / 2));
     }
@@ -126,10 +138,11 @@ canvas.addEventListener('pointermove', (event) => {
     const dyCanvasPixels = (event.clientY - lastDragY) * canvasPixelsPerCssPixel;
     lastDragX = event.clientX;
     lastDragY = event.clientY;
-    // Content follows the pointer: dragging right reveals lower origins;
-    // dragging up zooms in (canvas y grows downward, so negate).
+    // Content follows the pointer on both axes: dragging right reveals
+    // lower origins, and dragging down zooms in — zooming in scales the
+    // pyramid about its top edge, so its content moves down the screen.
     applyPan(-dxCanvasPixels / (renderer.canvasSize / 2));
-    applyZoom(-dyCanvasPixels / (renderer.canvasSize / 2));
+    applyZoomAt(dyCanvasPixels / ZOOM_DRAG_PIXELS, (event.clientX - rect.left) / rect.width);
     draw();
   }
 });
@@ -152,7 +165,10 @@ canvas.addEventListener(
   'wheel',
   (event) => {
     event.preventDefault();
-    applyZoom(-event.deltaY * ZOOM_SPEED);
+    const rect = canvas.getBoundingClientRect();
+    // Scroll up = zoom in, the usual desktop convention. (Deliberately the
+    // opposite sense from vertical drag, which follows the finger instead.)
+    applyZoomAt(-event.deltaY * ZOOM_SPEED, (event.clientX - rect.left) / rect.width);
     draw();
   },
   {passive: false},

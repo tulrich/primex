@@ -54,6 +54,47 @@ export function panBy(camera: Camera, dFrac: number): Camera {
 }
 
 /**
+ * Width of the visible window, in units of origin-cell widths. The view
+ * always spans exactly 2 cells at zoomFrac=0 (origin and origin+1), and
+ * narrows as zoomFrac grows toward the next generation.
+ */
+export function windowCells(camera: Camera): number {
+  return 2 / 2 ** camera.zoomFrac;
+}
+
+/**
+ * Absolute world position of the point `screenFracX` across the view
+ * (0 = left edge, 1 = right edge), in normalized value space where an
+ * integer n at generation g occupies [n/2^g, (n+1)/2^g].
+ *
+ * This is the invariant coordinate: panBy shifts it, and zoomBy leaves
+ * the left edge's value untouched (that's what makes the rebase seamless).
+ * Only meaningful for test-scale origins — Number() on a deep bigint
+ * origin loses precision, which is exactly the reason the camera stores
+ * position as bigint + bounded float rather than one float.
+ */
+export function worldXAt(camera: Camera, screenFracX: number): number {
+  const cells = Number(camera.origin) + camera.frac + screenFracX * windowCells(camera);
+  return cells / 2 ** camera.bottomGen;
+}
+
+/**
+ * Zooms by `dZoom` while pinning the world point under `anchorFracX`
+ * (0 = left edge of the view, 1 = right edge), so zooming about the
+ * cursor/pinch midpoint doesn't drag content sideways.
+ *
+ * The renderer can only scale about the top-left corner (see view.ts), so
+ * the anchor is implemented here instead: the window's width changes by
+ * `shrink` cells, and the left edge absorbs `anchorFracX` of that change
+ * before the zoom is applied. Doing the pan first means zoomBy's rebase
+ * then converts frac into the new generation's units for free.
+ */
+export function zoomAtAnchor(camera: Camera, dZoom: number, anchorFracX: number): Camera {
+  const shrink = windowCells(camera) * (1 - 2 ** -dZoom);
+  return zoomBy(panBy(camera, anchorFracX * shrink), dZoom);
+}
+
+/**
  * Damps an input delta that would push further past a hard boundary
  * (root pan, or min zoom-out), so hitting the edge decelerates smoothly
  * instead of stopping dead. Has no effect anywhere else — this only

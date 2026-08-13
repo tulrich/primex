@@ -81,10 +81,15 @@ function drawRows(ctx: CanvasRenderingContext2D, width: number, height: number, 
  *   continuously from showing (origin, origin+1) at frac=0 to
  *   (origin+1, origin+2) at frac->1, matching what the buffer looks like
  *   right after the pan rebase in camera.ts.
- * - `zoomFrac` scales that crop by 2^zoomFrac about whichever top corner
- *   (frac < 0.5 ? left : right) is the anchor camera.ts's zoom rebase would
- *   pick as the next child — so at zoomFrac->1 this is pixel-consistent
- *   with the un-scaled render of the rebased camera at zoomFrac=0.
+ * - `zoomFrac` scales that crop by 2^zoomFrac about the top-left corner.
+ *
+ * Both anchors are forced by camera.ts's rebase rules, not chosen:
+ * `frac' = 2*frac - c` maps the window's LEFT edge to the same world
+ * point across a zoom rebase, and `bottomGen + 1` does the same for the
+ * TOP edge. Anchoring anywhere else makes the render disagree with the
+ * rebase, which shows up as a visible jump when zoomFrac wraps. To zoom
+ * about the cursor instead, the *camera* compensates with a pan — see
+ * zoomAtAnchor in camera.ts — leaving this transform always corner-based.
  */
 export class CameraRenderer {
   readonly rows: number;
@@ -122,12 +127,9 @@ export class CameraRenderer {
     ctx.clearRect(0, 0, size, size);
 
     const zoomScale = 2 ** camera.zoomFrac;
-    const cornerX = camera.frac < 0.5 ? 0 : size;
 
     ctx.save();
-    ctx.translate(cornerX, 0);
     ctx.scale(zoomScale, zoomScale);
-    ctx.translate(-cornerX, 0);
     ctx.drawImage(this.buffer, camera.frac * (size / 2), 0, size, size, 0, 0, size, size);
     ctx.restore();
 

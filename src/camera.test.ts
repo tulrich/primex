@@ -3,6 +3,9 @@ import {
   makeCamera,
   panBy,
   zoomBy,
+  zoomAtAnchor,
+  worldXAt,
+  windowCells,
   dampPanDelta,
   dampZoomDelta,
   MIN_ORIGIN,
@@ -108,6 +111,81 @@ describe('zoomBy', () => {
     expect(oneShot.origin).toBe(stepwise.origin);
     expect(oneShot.bottomGen).toBe(stepwise.bottomGen);
     expect(oneShot.frac).toBeCloseTo(stepwise.frac, 9);
+  });
+});
+
+describe('worldXAt / zoom continuity', () => {
+  // Cameras spanning: the root, mid-cell, either side of the frac=0.5
+  // child-choice boundary (where the old renderer flipped its anchor and
+  // visibly jumped), and a deeper generation.
+  const cameras: Camera[] = [
+    makeCamera(MIN_ORIGIN, MIN_BOTTOM_GEN),
+    {...makeCamera(5n, 3), frac: 0.25},
+    {...makeCamera(5n, 3), frac: 0.499},
+    {...makeCamera(5n, 3), frac: 0.501},
+    {...makeCamera(37n, 6), frac: 0.8, zoomFrac: 0.4},
+  ];
+
+  it('zoomBy leaves the view left edge on the same world point', () => {
+    for (const c of cameras) {
+      for (const dz of [0.1, 0.5, 0.99, 1, 1.7, -0.3, -1]) {
+        const zoomed = zoomBy(c, dz);
+        if (zoomed.bottomGen <= MIN_BOTTOM_GEN && dz < 0) continue; // clamped
+        expect(worldXAt(zoomed, 0)).toBeCloseTo(worldXAt(c, 0), 12);
+      }
+    }
+  });
+
+  it('panBy shifts the left edge by exactly the requested cell count', () => {
+    const c = {...makeCamera(5n, 3), frac: 0.25};
+    for (const dp of [0.1, 0.75, 1.5, -0.2]) {
+      const expected = worldXAt(c, 0) + dp / 2 ** c.bottomGen;
+      expect(worldXAt(panBy(c, dp), 0)).toBeCloseTo(expected, 12);
+    }
+  });
+
+  it('the window narrows by exactly 2x per generation zoomed in', () => {
+    const c = {...makeCamera(5n, 3), frac: 0.25};
+    expect(windowCells(c)).toBeCloseTo(2, 12);
+    expect(windowCells(zoomBy(c, 1))).toBeCloseTo(2, 12); // rebased: 2 new cells
+    // In absolute terms the visible span really did halve.
+    const span = (cam: Camera) => worldXAt(cam, 1) - worldXAt(cam, 0);
+    expect(span(zoomBy(c, 1))).toBeCloseTo(span(c) / 2, 12);
+  });
+
+  it('zoomAtAnchor pins the world point under the anchor', () => {
+    for (const c of cameras) {
+      for (const anchor of [0, 0.25, 0.5, 0.75, 1]) {
+        for (const dz of [0.1, 0.6, 1.3, -0.4]) {
+          const zoomed = zoomAtAnchor(c, dz, anchor);
+          if (zoomed.bottomGen <= MIN_BOTTOM_GEN && dz < 0) continue; // clamped
+          expect(worldXAt(zoomed, anchor)).toBeCloseTo(worldXAt(c, anchor), 12);
+        }
+      }
+    }
+  });
+
+  it('zooming across the frac=0.5 child boundary stays continuous', () => {
+    // Regression: the renderer used to flip its zoom anchor from the left
+    // corner to the right corner at frac=0.5, so two cameras a hair apart
+    // rendered from very different transforms — a visible jump mid-drag.
+    const below = {...makeCamera(5n, 3), frac: 0.4999, zoomFrac: 0.5};
+    const above = {...makeCamera(5n, 3), frac: 0.5001, zoomFrac: 0.5};
+
+    // These two cameras really are 0.0002 cells apart, so the view should
+    // differ by exactly that much — and by nothing more. The old bug moved
+    // the view by a large fraction of the window across this boundary, so
+    // compare the step against the window span rather than to zero.
+    const step = Math.abs(worldXAt(above, 0.5) - worldXAt(below, 0.5));
+    const span = worldXAt(below, 1) - worldXAt(below, 0);
+    expect(step).toBeCloseTo(0.0002 / 2 ** 3, 12);
+    expect(step).toBeLessThan(span / 1000);
+
+    // And stepping zoomFrac through the 1.0 rebase is smooth too.
+    const justUnder = zoomBy(below, 0.4999);
+    const justOver = zoomBy(below, 0.5001);
+    expect(worldXAt(justOver, 0)).toBeCloseTo(worldXAt(justUnder, 0), 12);
+    expect(justOver.bottomGen).toBe(justUnder.bottomGen + 1); // did rebase
   });
 });
 
