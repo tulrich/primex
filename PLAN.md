@@ -94,11 +94,18 @@ than discrete jumps.
 [x] Camera module (`camera.ts`): state + rebase transitions above, with
     unit-style sanity checks (rebase round-trips, clamping at root).
 [x] Generalize the renderer to draw from continuous camera state; replace
-    click-quadrant nav with drag (pan) + wheel/trackpad-pinch (zoom) wired
-    to the camera module. (Ended up caching a single (origin, bottomGen)
-    buffer with a 1-cell pan margin rather than a truly bare re-render per
-    frame — cheap, and a natural stepping stone to the full tile cache.
-    True touch pinch-zoom is not wired up yet, only wheel/trackpad.)
+    click-quadrant nav with drag (pan) + wheel/trackpad-pinch/touch-pinch
+    (zoom) wired to the camera module. (Ended up caching a single
+    (origin, bottomGen) buffer with a 1-cell pan margin rather than a
+    truly bare re-render per frame — cheap, and a natural stepping stone
+    to the full tile cache.) Two follow-up fixes after phone testing:
+    `touch-action: none` on the canvas (it was only `manipulation` on the
+    wrapper, so the browser's own scroll/pinch was stealing the gesture
+    before our pointer handlers saw it), and two-pointer pinch tracking
+    (was wheel-only, so touch pinch did nothing). Known limitation: pinch
+    zoom still visually anchors to a fixed corner (whichever child the
+    camera is about to descend into), not to wherever your fingers are —
+    revisit if it feels wrong in practice.
 [ ] Add inertia on top of step 2's interaction.
 [ ] Add the tile cache + compositing for performance.
 [ ] Iterate: placeholder fade-in, edge clamping polish, tune inertia feel.

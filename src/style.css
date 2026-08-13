@@ -25,7 +25,6 @@ h1 {
 #canvas-wrap {
   width: min(80vmin, 640px);
   height: min(80vmin, 640px);
-  touch-action: manipulation;
 }
 
 #view {
@@ -34,6 +33,9 @@ h1 {
   image-rendering: pixelated;
   cursor: pointer;
   display: block;
+  /* Drag/pinch are fully custom-handled below; block the browser's own
+     scroll/pinch-zoom/pull-to-refresh so they don't steal the gesture. */
+  touch-action: none;
 }
 
 #readout {

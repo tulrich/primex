@@ -39,37 +39,84 @@ function draw(): void {
   zoomOutButton.disabled = camera.origin <= MIN_ORIGIN && camera.bottomGen <= MIN_BOTTOM_GEN;
 }
 
-// --- Pan: pointer drag, in units of the canvas's own displayed size so it
-// tracks the finger/cursor 1:1 regardless of CSS scaling. ---
+// --- Pan/zoom via pointer events: one active pointer drags (pan only);
+// two active pointers pinch (pan follows the midpoint, zoom follows the
+// change in distance between them). Everything's tracked in units of the
+// canvas's own pixel size so it's independent of CSS scaling. ---
 
+const activePointers = new Map<number, {x: number; y: number}>();
 let dragPointerId: number | null = null;
-let lastClientX = 0;
+let lastDragX = 0;
+let pinchLastDist = 0;
+let pinchLastMidX = 0;
+
+function pinchMetrics(): {dist: number; midX: number} {
+  const [a, b] = [...activePointers.values()];
+  return {dist: Math.hypot(a.x - b.x, a.y - b.y), midX: (a.x + b.x) / 2};
+}
+
+/** (Re)starts single-drag or pinch tracking from the current pointer set. */
+function beginGesture(pointerId: number): void {
+  if (activePointers.size === 1) {
+    dragPointerId = pointerId;
+    lastDragX = activePointers.get(pointerId)!.x;
+  } else if (activePointers.size === 2) {
+    dragPointerId = null;
+    ({dist: pinchLastDist, midX: pinchLastMidX} = pinchMetrics());
+  }
+}
 
 canvas.addEventListener('pointerdown', (event) => {
-  dragPointerId = event.pointerId;
-  lastClientX = event.clientX;
-  canvas.setPointerCapture(event.pointerId);
+  activePointers.set(event.pointerId, {x: event.clientX, y: event.clientY});
+  beginGesture(event.pointerId);
+  // Best-effort: keeps receiving move/up events if the pointer leaves the
+  // canvas mid-gesture. Not essential to gesture tracking, so a failure
+  // here (e.g. an already-released pointer) shouldn't drop the pointer.
+  try {
+    canvas.setPointerCapture(event.pointerId);
+  } catch {
+    // Ignore — see comment above.
+  }
 });
 
 canvas.addEventListener('pointermove', (event) => {
-  if (dragPointerId !== event.pointerId) return;
-  const rect = canvas.getBoundingClientRect();
-  const dxCanvasPixels = ((event.clientX - lastClientX) / rect.width) * renderer.canvasSize;
-  lastClientX = event.clientX;
+  if (!activePointers.has(event.pointerId)) return;
+  activePointers.set(event.pointerId, {x: event.clientX, y: event.clientY});
 
-  // Content follows the pointer: dragging right reveals lower origins.
-  const dFrac = -dxCanvasPixels / (renderer.canvasSize / 2);
-  camera = panBy(camera, dFrac);
-  draw();
+  const rect = canvas.getBoundingClientRect();
+  const canvasPixelsPerCssPixel = renderer.canvasSize / rect.width;
+
+  if (activePointers.size >= 2) {
+    const {dist, midX} = pinchMetrics();
+    if (pinchLastDist > 0) {
+      camera = zoomBy(camera, Math.log2(dist / pinchLastDist));
+      const dxCanvasPixels = (midX - pinchLastMidX) * canvasPixelsPerCssPixel;
+      camera = panBy(camera, -dxCanvasPixels / (renderer.canvasSize / 2));
+    }
+    pinchLastDist = dist;
+    pinchLastMidX = midX;
+    draw();
+    return;
+  }
+
+  if (dragPointerId === event.pointerId) {
+    const dxCanvasPixels = (event.clientX - lastDragX) * canvasPixelsPerCssPixel;
+    lastDragX = event.clientX;
+    // Content follows the pointer: dragging right reveals lower origins.
+    camera = panBy(camera, -dxCanvasPixels / (renderer.canvasSize / 2));
+    draw();
+  }
 });
 
-function endDrag(event: PointerEvent): void {
-  if (dragPointerId !== event.pointerId) return;
-  dragPointerId = null;
+function releasePointer(event: PointerEvent): void {
+  activePointers.delete(event.pointerId);
+  if (dragPointerId === event.pointerId) dragPointerId = null;
+  const remaining = [...activePointers.keys()];
+  if (remaining.length === 1) beginGesture(remaining[0]);
 }
 
-canvas.addEventListener('pointerup', endDrag);
-canvas.addEventListener('pointercancel', endDrag);
+canvas.addEventListener('pointerup', releasePointer);
+canvas.addEventListener('pointercancel', releasePointer);
 
 // --- Zoom: wheel (also how browsers report trackpad pinch, via ctrlKey). ---
 
