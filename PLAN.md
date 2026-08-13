@@ -12,3 +12,86 @@ Tasks
 [x] Default view scale=9 (512x512), origin=2
 [x] Navigation.
 
+# v2: Continuous navigation
+
+Replace the discrete tap-to-zoom/pan navigation with continuous swipe-driven
+pan and zoom (with inertia), backed by a tile cache so panning/zooming don't
+require re-running primality tests on every frame.
+
+## Camera model
+
+Two axes, each an exact bigint/int anchor plus a small bounded float for
+sub-cell animation — never a single float carrying unbounded-depth precision.
+
+```
+origin: bigint            // x anchor: an integer cell at generation bottomGen
+frac: number ∈ [0, 1)     // x: continuous offset within origin's own cell
+
+bottomGen: number         // y anchor: exact integer = origin's bit-length − 1
+zoomFrac: number ∈ [0, 1) // y: continuous offset toward bottomGen ± 1
+
+visibleRows: number       // fixed constant (e.g. 9): viewport height in
+                           // generations, decoupled from zoom/pan entirely
+```
+
+`bottomGen` is derived, not stored redundantly with drift risk — it's always
+exactly `origin`'s bit length minus one, free to compute from a bigint.
+
+Dropping the old "origin must be even / represents a sibling pair"
+invariant: under continuous camera motion the anchor can land on any
+integer, not just tap-selected pairs. Children of `origin` are simply
+`origin*2` and `origin*2+1`.
+
+### Rebasing (the core mechanic — both axes funnel through `origin`)
+
+- **Pan overflow** (`frac` leaves `[0,1)`): `origin ± 1`, wrap `frac` into
+  range. Same-generation neighbor shift.
+- **Zoom-in overflow** (`zoomFrac >= 1`):
+  `origin = origin*2 + (frac < 0.5 ? 0 : 1)`, `bottomGen += 1`,
+  `zoomFrac -= 1`, `frac = frac*2 - (frac < 0.5 ? 0 : 1)`.
+- **Zoom-out overflow** (`zoomFrac < 0`):
+  `origin = origin >> 1n`, `bottomGen -= 1`, `zoomFrac += 1`,
+  `frac = (frac + (origin_old odd ? 1 : 0)) / 2`.
+- Clamp at the root: `origin` cannot go below 2, `bottomGen` cannot go
+  below 1.
+
+Rendering always samples `visibleRows` generations starting at `bottomGen`
+using ordinary bigint primality tests (unchanged from v1), then applies a
+uniform `2^zoomFrac` scale so in-between frames look like smooth zoom rather
+than discrete jumps.
+
+## Tile cache
+
+- A tile is a fixed-size offscreen render (reusing today's row-layout math)
+  keyed by `(generation, tileIndex)`, where `tileIndex` comes from the same
+  `floor(u * 2^generation)` math as the camera rebasing — i.e. tile keys are
+  the standard slippy-map `(z, x)` scheme, valid regardless of where the
+  camera currently sits.
+- Cache in a `Map`, rendered lazily and kept as `ImageBitmap`/offscreen
+  canvas; each frame, blit whichever cached tiles intersect the viewport via
+  `drawImage` with the current pan/zoom transform.
+- Missing tiles render async (no primality work on the main interaction
+  thread's critical path); show the nearest coarser cached tile scaled up
+  as a placeholder until the sharp tile is ready.
+- No Web Worker for now — tile caching should absorb most redundant
+  primality computation. Revisit only if profiling shows jank.
+
+## Interaction
+
+- Pointer drag updates `frac` (and/or `zoomFrac` for pinch/wheel), tracking
+  velocity.
+- On release, keep integrating the last velocity with exponential decay
+  each animation frame until it's ~0, applying the same rebase rules as
+  live dragging.
+- Clamp so you can't pan/zoom out past the root.
+
+## Implementation steps (staged — validate feel before optimizing)
+
+[ ] Camera module (`camera.ts`): state + rebase transitions above, with
+    unit-style sanity checks (rebase round-trips, clamping at root).
+[ ] Generalize the renderer to draw from continuous camera state (still a
+    full re-render per frame, no cache yet); replace click-quadrant nav
+    with drag (pan) + wheel/pinch (zoom) wired to the camera module.
+[ ] Add inertia on top of step 2's interaction.
+[ ] Add the tile cache + compositing for performance.
+[ ] Iterate: placeholder fade-in, edge clamping polish, tune inertia feel.
