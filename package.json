@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "preview": "vite preview",
-    "check": "tsc -b --noEmit",
+    "check": "tsc -b",
     "test": "vitest run"
   },
   "repository": {

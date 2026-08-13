@@ -1,28 +1,35 @@
 import {isPrime} from './primes';
+import type {Camera} from './camera';
 
 /**
- * A view is anchored at `origin`, an even integer >= 2. The bottom row of
- * the image shows the pair (origin, origin+1). Each row above shows the
- * children of the row below (i -> 2i, 2i+1), doubling the cell count and
- * halving the cell size each time, for `scale` rows total. This keeps the
- * image content bounded to O(2^scale) cells no matter how deep `origin`
- * has zoomed, since scale stays fixed while only origin grows.
+ * Number of generations shown at once. Fixed — the continuous camera
+ * changes *which* generations are visible (via `bottomGen`/`zoomFrac`),
+ * not how many.
  */
-export interface ViewState {
-  readonly scale: number;
-  readonly origin: bigint;
+export const VISIBLE_ROWS = 9;
+
+/**
+ * Row 0 (bottom) normally has exactly 2 cells: origin, origin+1. We render
+ * one extra cell of margin on the right so a buffer built for the current
+ * (origin, bottomGen) can be panned continuously — cropped and shown at any
+ * `frac` offset in [0, 1) — without needing to re-run primality tests on
+ * every frame. See PLAN.md's "Tile cache" section for why this margin is
+ * exactly enough: zoom is a pure transform of the crop, it never needs to
+ * sample outside it.
+ */
+const MARGIN_CELLS = 1;
+const BOTTOM_ROW_CELLS = 2 + MARGIN_CELLS;
+
+export function canvasSizeForRows(rows: number): number {
+  return 2 ** rows;
 }
 
-export const DEFAULT_SCALE = 9;
-export const MIN_ORIGIN = 2n;
-export const DEFAULT_ORIGIN = MIN_ORIGIN;
-
-export function canvasSizeForScale(scale: number): number {
-  return 2 ** scale;
+function bufferWidthForRows(rows: number): number {
+  return BOTTOM_ROW_CELLS * 2 ** (rows - 1);
 }
 
 interface Row {
-  /** Distance in pixels from the top of the image to this row's top edge. */
+  /** Distance in pixels from the top of the buffer to this row's top edge. */
   readonly top: number;
   readonly height: number;
   readonly cellCount: number;
@@ -34,30 +41,27 @@ interface Row {
  * Lays out rows top-to-bottom: a blank 1px cap row first, then the
  * numbered rows from the finest (top, height 1) down to the coarsest
  * (bottom, height canvasSize/2). Row heights form the geometric series
- * 1 + (2^(scale-1) + ... + 2^0), which sums to exactly canvasSize.
+ * 1 + (2^(rows-1) + ... + 2^0), which sums to exactly canvasSizeForRows.
  */
-function layoutRows(state: ViewState): Row[] {
-  const {scale, origin} = state;
-  const rows: Row[] = [];
+function layoutRows(origin: bigint, rows: number): Row[] {
+  const result: Row[] = [];
   let top = 1; // Cap row occupies [0, 1).
-  for (let j = scale - 1; j >= 0; j--) {
-    const height = 2 ** (scale - 1 - j);
-    const cellCount = 2 ** (j + 1);
+  for (let j = rows - 1; j >= 0; j--) {
+    const height = 2 ** (rows - 1 - j);
+    const cellCount = BOTTOM_ROW_CELLS * 2 ** j;
     const start = origin * 2n ** BigInt(j);
-    rows.push({top, height, cellCount, start});
+    result.push({top, height, cellCount, start});
     top += height;
   }
-  return rows;
+  return result;
 }
 
-export function render(ctx: CanvasRenderingContext2D, state: ViewState): void {
-  const size = canvasSizeForScale(state.scale);
-
+function drawRows(ctx: CanvasRenderingContext2D, width: number, height: number, rows: Row[]): void {
   ctx.fillStyle = '#ffffff';
-  ctx.fillRect(0, 0, size, size);
+  ctx.fillRect(0, 0, width, height);
 
   ctx.fillStyle = '#000000';
-  for (const row of layoutRows(state)) {
+  for (const row of rows) {
     for (let c = 0; c < row.cellCount; c++) {
       const n = row.start + BigInt(c);
       if (isPrime(n)) {
@@ -65,9 +69,70 @@ export function render(ctx: CanvasRenderingContext2D, state: ViewState): void {
       }
     }
   }
+}
 
-  // Thin border around the whole square image.
-  ctx.strokeStyle = '#000000';
-  ctx.lineWidth = 1;
-  ctx.strokeRect(0.5, 0.5, size - 1, size - 1);
+/**
+ * Draws the continuous camera view. Internally renders a wider-than-canvas
+ * buffer for (origin, bottomGen) — re-running primality tests only when
+ * those change — then composites it onto `ctx` each call with a transform
+ * derived from (frac, zoomFrac):
+ *
+ * - `frac` crops a canvasSize-wide window out of the buffer, sliding
+ *   continuously from showing (origin, origin+1) at frac=0 to
+ *   (origin+1, origin+2) at frac->1, matching what the buffer looks like
+ *   right after the pan rebase in camera.ts.
+ * - `zoomFrac` scales that crop by 2^zoomFrac about whichever top corner
+ *   (frac < 0.5 ? left : right) is the anchor camera.ts's zoom rebase would
+ *   pick as the next child — so at zoomFrac->1 this is pixel-consistent
+ *   with the un-scaled render of the rebased camera at zoomFrac=0.
+ */
+export class CameraRenderer {
+  readonly rows: number;
+  readonly canvasSize: number;
+
+  private readonly buffer: HTMLCanvasElement;
+  private readonly bufferCtx: CanvasRenderingContext2D;
+  private cachedOrigin: bigint | null = null;
+  private cachedBottomGen: number | null = null;
+
+  constructor(rows: number = VISIBLE_ROWS) {
+    this.rows = rows;
+    this.canvasSize = canvasSizeForRows(rows);
+
+    this.buffer = document.createElement('canvas');
+    this.buffer.width = bufferWidthForRows(rows);
+    this.buffer.height = this.canvasSize;
+    const ctx = this.buffer.getContext('2d');
+    if (!ctx) throw new Error('2d canvas context unavailable');
+    this.bufferCtx = ctx;
+  }
+
+  private ensureBuffer(origin: bigint, bottomGen: number): void {
+    if (this.cachedOrigin === origin && this.cachedBottomGen === bottomGen) return;
+    drawRows(this.bufferCtx, this.buffer.width, this.buffer.height, layoutRows(origin, this.rows));
+    this.cachedOrigin = origin;
+    this.cachedBottomGen = bottomGen;
+  }
+
+  draw(ctx: CanvasRenderingContext2D, camera: Camera): void {
+    this.ensureBuffer(camera.origin, camera.bottomGen);
+
+    const size = this.canvasSize;
+    ctx.imageSmoothingEnabled = false;
+    ctx.clearRect(0, 0, size, size);
+
+    const zoomScale = 2 ** camera.zoomFrac;
+    const cornerX = camera.frac < 0.5 ? 0 : size;
+
+    ctx.save();
+    ctx.translate(cornerX, 0);
+    ctx.scale(zoomScale, zoomScale);
+    ctx.translate(-cornerX, 0);
+    ctx.drawImage(this.buffer, camera.frac * (size / 2), 0, size, size, 0, 0, size, size);
+    ctx.restore();
+
+    ctx.strokeStyle = '#000000';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(0.5, 0.5, size - 1, size - 1);
+  }
 }

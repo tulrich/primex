@@ -93,9 +93,12 @@ than discrete jumps.
 
 [x] Camera module (`camera.ts`): state + rebase transitions above, with
     unit-style sanity checks (rebase round-trips, clamping at root).
-[ ] Generalize the renderer to draw from continuous camera state (still a
-    full re-render per frame, no cache yet); replace click-quadrant nav
-    with drag (pan) + wheel/pinch (zoom) wired to the camera module.
+[x] Generalize the renderer to draw from continuous camera state; replace
+    click-quadrant nav with drag (pan) + wheel/trackpad-pinch (zoom) wired
+    to the camera module. (Ended up caching a single (origin, bottomGen)
+    buffer with a 1-cell pan margin rather than a truly bare re-render per
+    frame — cheap, and a natural stepping stone to the full tile cache.
+    True touch pinch-zoom is not wired up yet, only wheel/trackpad.)
 [ ] Add inertia on top of step 2's interaction.
 [ ] Add the tile cache + compositing for performance.
 [ ] Iterate: placeholder fade-in, edge clamping polish, tune inertia feel.

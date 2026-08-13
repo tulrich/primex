@@ -1,5 +1,5 @@
-import {render, DEFAULT_SCALE, DEFAULT_ORIGIN, MIN_ORIGIN, canvasSizeForScale, type ViewState} from './view';
-import {hitTest, applyNav} from './nav';
+import {makeCamera, panBy, zoomBy, MIN_ORIGIN, MIN_BOTTOM_GEN, type Camera} from './camera';
+import {CameraRenderer} from './view';
 
 const app = document.querySelector<HTMLDivElement>('#app');
 if (!app) throw new Error('missing #app root');
@@ -13,8 +13,7 @@ app.innerHTML = `
     <button id="reset">Reset</button>
   </div>
   <p id="help">
-    Tap the upper-left or upper-right quadrant to zoom in on that half.
-    Tap the lower half to zoom out. Tap near the left/right edges to pan.
+    Drag to pan. Scroll or pinch to zoom.
   </p>
 `;
 
@@ -25,41 +24,74 @@ const resetButton = document.querySelector<HTMLButtonElement>('#reset')!;
 const ctx = canvas.getContext('2d');
 if (!ctx) throw new Error('2d canvas context unavailable');
 
-let state: ViewState = {scale: DEFAULT_SCALE, origin: DEFAULT_ORIGIN};
+const renderer = new CameraRenderer();
+canvas.width = renderer.canvasSize;
+canvas.height = renderer.canvasSize;
 
-function topRowEnd(s: ViewState): bigint {
-  const start = s.origin * 2n ** BigInt(s.scale - 1);
-  return start + 2n ** BigInt(s.scale) - 1n;
-}
+let camera: Camera = makeCamera();
 
 function draw(): void {
-  const size = canvasSizeForScale(state.scale);
-  canvas.width = size;
-  canvas.height = size;
-  render(ctx!, state);
+  renderer.draw(ctx!, camera);
 
   readout.textContent =
-    `origin ${state.origin}  ·  scale ${state.scale}  ·  showing ` +
-    `${state.origin}–${topRowEnd(state)}`;
-  zoomOutButton.disabled = state.origin <= MIN_ORIGIN;
+    `origin ${camera.origin}  ·  gen ${camera.bottomGen}  ·  ` +
+    `frac ${camera.frac.toFixed(3)}  ·  zoomFrac ${camera.zoomFrac.toFixed(3)}`;
+  zoomOutButton.disabled = camera.origin <= MIN_ORIGIN && camera.bottomGen <= MIN_BOTTOM_GEN;
 }
 
-function navigate(xFraction: number, yFraction: number): void {
-  const zone = hitTest(xFraction, yFraction);
-  state = {...state, origin: applyNav(state.origin, zone)};
-  draw();
-}
+// --- Pan: pointer drag, in units of the canvas's own displayed size so it
+// tracks the finger/cursor 1:1 regardless of CSS scaling. ---
 
-canvas.addEventListener('click', (event) => {
-  const rect = canvas.getBoundingClientRect();
-  const xFraction = (event.clientX - rect.left) / rect.width;
-  const yFraction = (event.clientY - rect.top) / rect.height;
-  navigate(xFraction, yFraction);
+let dragPointerId: number | null = null;
+let lastClientX = 0;
+
+canvas.addEventListener('pointerdown', (event) => {
+  dragPointerId = event.pointerId;
+  lastClientX = event.clientX;
+  canvas.setPointerCapture(event.pointerId);
 });
 
-zoomOutButton.addEventListener('click', () => navigate(0.5, 1));
+canvas.addEventListener('pointermove', (event) => {
+  if (dragPointerId !== event.pointerId) return;
+  const rect = canvas.getBoundingClientRect();
+  const dxCanvasPixels = ((event.clientX - lastClientX) / rect.width) * renderer.canvasSize;
+  lastClientX = event.clientX;
+
+  // Content follows the pointer: dragging right reveals lower origins.
+  const dFrac = -dxCanvasPixels / (renderer.canvasSize / 2);
+  camera = panBy(camera, dFrac);
+  draw();
+});
+
+function endDrag(event: PointerEvent): void {
+  if (dragPointerId !== event.pointerId) return;
+  dragPointerId = null;
+}
+
+canvas.addEventListener('pointerup', endDrag);
+canvas.addEventListener('pointercancel', endDrag);
+
+// --- Zoom: wheel (also how browsers report trackpad pinch, via ctrlKey). ---
+
+const ZOOM_SPEED = 0.0015;
+
+canvas.addEventListener(
+  'wheel',
+  (event) => {
+    event.preventDefault();
+    camera = zoomBy(camera, -event.deltaY * ZOOM_SPEED);
+    draw();
+  },
+  {passive: false},
+);
+
+zoomOutButton.addEventListener('click', () => {
+  camera = zoomBy(camera, -1);
+  draw();
+});
+
 resetButton.addEventListener('click', () => {
-  state = {scale: DEFAULT_SCALE, origin: DEFAULT_ORIGIN};
+  camera = makeCamera();
   draw();
 });
 
