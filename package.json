@@ -1,0 +1,28 @@
+{
+  "name": "primex",
+  "version": "1.0.0",
+  "description": "Visually explore the set of prime numbers via their binary representations mapped to images",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview",
+    "check": "tsc -b --noEmit"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/tulrich/primex.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/tulrich/primex/issues"
+  },
+  "homepage": "https://github.com/tulrich/primex#readme",
+  "devDependencies": {
+    "typescript": "^7.0.2",
+    "vite": "^8.2.1",
+    "vite-plugin-singlefile": "^2.3.3"
+  }
+}
