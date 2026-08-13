@@ -34,8 +34,12 @@ visibleRows: number       // fixed constant (e.g. 9): viewport height in
                            // generations, decoupled from zoom/pan entirely
 ```
 
-`bottomGen` is derived, not stored redundantly with drift risk — it's always
-exactly `origin`'s bit length minus one, free to compute from a bigint.
+`bottomGen` is a plain zoom-depth counter, tracked as its own state rather
+than derived from `origin`'s bit length. It's tempting to derive it (bit
+length is free to compute from a bigint), but a pure pan step can cross a
+power-of-2 boundary (origin 3 -> 4) without that being a zoom event — if
+`bottomGen` were re-derived after every pan, the rendered scale would pop
+on a sideways swipe with no zoom involved. Only `zoomBy` changes it.
 
 Dropping the old "origin must be even / represents a sibling pair"
 invariant: under continuous camera motion the anchor can land on any
@@ -87,7 +91,7 @@ than discrete jumps.
 
 ## Implementation steps (staged — validate feel before optimizing)
 
-[ ] Camera module (`camera.ts`): state + rebase transitions above, with
+[x] Camera module (`camera.ts`): state + rebase transitions above, with
     unit-style sanity checks (rebase round-trips, clamping at root).
 [ ] Generalize the renderer to draw from continuous camera state (still a
     full re-render per frame, no cache yet); replace click-quadrant nav
