@@ -13,7 +13,7 @@ export interface ViewState {
   readonly origin: bigint;
 }
 
-export const DEFAULT_SCALE = 8;
+export const DEFAULT_SCALE = 9;
 export const MIN_ORIGIN = 2n;
 export const DEFAULT_ORIGIN = MIN_ORIGIN;
 
