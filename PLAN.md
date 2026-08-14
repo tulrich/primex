@@ -11,4 +11,5 @@ Tasks
 [x] Image creator, params are scale, origin. Image height=width=2^scale. Origin is the lower left quarter image.
 [x] Default view scale=8, origin=2
 [x] Navigation.
+[x] Drag-to-pan with inertia/momentum, snapping to the nearest origin.
 
