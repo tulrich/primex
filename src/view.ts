@@ -90,6 +90,12 @@ function drawRows(ctx: CanvasRenderingContext2D, width: number, height: number, 
  * rebase, which shows up as a visible jump when zoomFrac wraps. To zoom
  * about the cursor instead, the *camera* compensates with a pan — see
  * zoomAtAnchor in camera.ts — leaving this transform always corner-based.
+ *
+ * `overscrollXPixels`/`overscrollZoomOut` are purely visual, layered on
+ * top of an unchanged camera: pushing past the root/min-zoom boundary
+ * shifts and shrinks the content a little (revealing white at the edge)
+ * without the underlying camera state ever leaving its hard clamp. See
+ * main.ts for how these grow and decay.
  */
 export class CameraRenderer {
   readonly rows: number;
@@ -119,16 +125,28 @@ export class CameraRenderer {
     this.cachedBottomGen = bottomGen;
   }
 
-  draw(ctx: CanvasRenderingContext2D, camera: Camera): void {
+  draw(
+    ctx: CanvasRenderingContext2D,
+    camera: Camera,
+    overscrollXPixels = 0,
+    overscrollZoomOut = 0,
+  ): void {
     this.ensureBuffer(camera.origin, camera.bottomGen);
 
     const size = this.canvasSize;
     ctx.imageSmoothingEnabled = false;
-    ctx.clearRect(0, 0, size, size);
+    // Explicit white fill, not clearRect: overscroll can reveal area past
+    // the drawn buffer (there's nothing below the root to show), and that
+    // area needs to read as "edge of the content," not a transparency bug.
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, size, size);
 
-    const zoomScale = 2 ** camera.zoomFrac;
+    const zoomScale = 2 ** (camera.zoomFrac - overscrollZoomOut);
 
     ctx.save();
+    // Overscroll translate goes first (screen-space pixels, unaffected by
+    // the scale below), then the corner-anchored zoom as usual.
+    ctx.translate(overscrollXPixels, 0);
     ctx.scale(zoomScale, zoomScale);
     ctx.drawImage(this.buffer, camera.frac * (size / 2), 0, size, size, 0, 0, size, size);
     ctx.restore();

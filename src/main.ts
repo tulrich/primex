@@ -41,8 +41,27 @@ canvas.height = renderer.canvasSize;
 
 let camera: Camera = makeCamera();
 
+// --- Overscroll: purely a render-time visual, layered on top of an
+// unchanged, hard-clamped camera. Grows from whatever dampPanDelta/
+// dampZoomDelta absorbed at the boundary (see applyPanRaw/applyZoomRaw),
+// decays back to 0 every animation frame regardless of what else is
+// happening (see motionTick). ---
+
+let overscrollXPixels = 0;
+let overscrollZoomOut = 0;
+
+const MAX_OVERSCROLL_PX = 80;
+const MAX_OVERSCROLL_ZOOM = 0.35;
+
+/** Diminishing returns as `current` approaches `max`: full sensitivity near
+ * 0, ~0 sensitivity near the cap, and never exceeds it. */
+function pullOverscroll(current: number, deltaMagnitude: number, max: number): number {
+  const room = Math.max(0, 1 - current / max);
+  return Math.min(max, current + deltaMagnitude * room);
+}
+
 function draw(): void {
-  renderer.draw(ctx!, camera);
+  renderer.draw(ctx!, camera, overscrollXPixels, overscrollZoomOut);
 
   readout.textContent =
     `origin ${camera.origin}  ·  gen ${camera.bottomGen}  ·  ` +
@@ -57,19 +76,32 @@ function draw(): void {
 // change in distance between them. Everything's tracked in units of the
 // canvas's own pixel size so it's independent of CSS scaling. ---
 
-function applyPan(dFrac: number): void {
-  camera = panBy(camera, dampPanDelta(camera, dFrac));
+/** Applies a raw pan input, growing overscroll from whatever got damped
+ * away at the boundary. Returns the delta actually applied to the camera,
+ * for velocity tracking. */
+function applyPanRaw(dFracRaw: number): number {
+  const dFracDamped = dampPanDelta(camera, dFracRaw);
+  camera = panBy(camera, dFracDamped);
+  const lost = dFracRaw - dFracDamped;
+  if (lost < 0) {
+    const lostPixels = -lost * (renderer.canvasSize / 2);
+    overscrollXPixels = pullOverscroll(overscrollXPixels, lostPixels, MAX_OVERSCROLL_PX);
+  }
+  return dFracDamped;
 }
 
-/**
- * Zooms about `anchorFracX` (0 = left edge of the canvas, 1 = right), so
- * whatever sits under the cursor/fingers stays put instead of sliding
- * sideways as the view scales.
- */
-function applyZoomAt(dZoom: number, anchorFracX: number): void {
-  const damped = dampZoomDelta(camera, dZoom);
-  if (damped === 0) return;
-  camera = zoomAtAnchor(camera, damped, Math.min(1, Math.max(0, anchorFracX)));
+/** Same idea for zoom, about `anchorFracX` (0 = left edge, 1 = right) so
+ * whatever sits under the cursor/fingers stays put as the view scales. */
+function applyZoomRaw(dZoomRaw: number, anchorFracX: number): number {
+  const dZoomDamped = dampZoomDelta(camera, dZoomRaw);
+  if (dZoomDamped !== 0) {
+    camera = zoomAtAnchor(camera, dZoomDamped, Math.min(1, Math.max(0, anchorFracX)));
+  }
+  const lost = dZoomRaw - dZoomDamped;
+  if (lost < 0) {
+    overscrollZoomOut = pullOverscroll(overscrollZoomOut, -lost, MAX_OVERSCROLL_ZOOM);
+  }
+  return dZoomDamped;
 }
 
 /** Vertical drag distance, in canvas pixels, worth one full generation. */
@@ -81,6 +113,25 @@ let lastDragX = 0;
 let lastDragY = 0;
 let pinchLastDist = 0;
 let pinchLastMidX = 0;
+let lastGestureTimestamp = 0;
+
+// --- Velocity + inertia: an exponential moving average of applied motion
+// per millisecond, fed by every pointermove (drag or pinch alike), and
+// consumed by the always-running motion loop once all pointers lift. ---
+
+let panVelocity = 0; // dFrac per ms
+let zoomVelocity = 0; // dZoom per ms
+let velocityAnchorFracX = 0.5;
+const VELOCITY_EMA_ALPHA = 0.35;
+
+function trackVelocity(appliedPan: number, appliedZoom: number, dtMs: number, anchorFracX: number): void {
+  if (dtMs <= 0) return;
+  const instPan = appliedPan / dtMs;
+  const instZoom = appliedZoom / dtMs;
+  panVelocity += (instPan - panVelocity) * VELOCITY_EMA_ALPHA;
+  zoomVelocity += (instZoom - zoomVelocity) * VELOCITY_EMA_ALPHA;
+  velocityAnchorFracX = anchorFracX;
+}
 
 function pinchMetrics(): {dist: number; midX: number} {
   const [a, b] = [...activePointers.values()];
@@ -101,8 +152,15 @@ function beginGesture(pointerId: number): void {
 }
 
 canvas.addEventListener('pointerdown', (event) => {
+  // A deliberate touch always stops any ongoing fling, same as a real
+  // touchscreen — the motion loop also gates on activePointers being
+  // empty, but zeroing here means a tap-without-moving doesn't resume it.
+  panVelocity = 0;
+  zoomVelocity = 0;
+
   activePointers.set(event.pointerId, {x: event.clientX, y: event.clientY});
   beginGesture(event.pointerId);
+  lastGestureTimestamp = event.timeStamp;
   // Best-effort: keeps receiving move/up events if the pointer leaves the
   // canvas mid-gesture. Not essential to gesture tracking, so a failure
   // here (e.g. an already-released pointer) shouldn't drop the pointer.
@@ -117,18 +175,25 @@ canvas.addEventListener('pointermove', (event) => {
   if (!activePointers.has(event.pointerId)) return;
   activePointers.set(event.pointerId, {x: event.clientX, y: event.clientY});
 
+  const dt = event.timeStamp - lastGestureTimestamp;
+  lastGestureTimestamp = event.timeStamp;
+
   const rect = canvas.getBoundingClientRect();
   const canvasPixelsPerCssPixel = renderer.canvasSize / rect.width;
 
   if (activePointers.size >= 2) {
     const {dist, midX} = pinchMetrics();
+    const anchorFracX = (midX - rect.left) / rect.width;
+    let appliedPan = 0;
+    let appliedZoom = 0;
     if (pinchLastDist > 0) {
-      applyZoomAt(Math.log2(dist / pinchLastDist), (midX - rect.left) / rect.width);
+      appliedZoom = applyZoomRaw(Math.log2(dist / pinchLastDist), anchorFracX);
       const dxCanvasPixels = (midX - pinchLastMidX) * canvasPixelsPerCssPixel;
-      applyPan(-dxCanvasPixels / (renderer.canvasSize / 2));
+      appliedPan = applyPanRaw(-dxCanvasPixels / (renderer.canvasSize / 2));
     }
     pinchLastDist = dist;
     pinchLastMidX = midX;
+    trackVelocity(appliedPan, appliedZoom, dt, anchorFracX);
     draw();
     return;
   }
@@ -138,11 +203,13 @@ canvas.addEventListener('pointermove', (event) => {
     const dyCanvasPixels = (event.clientY - lastDragY) * canvasPixelsPerCssPixel;
     lastDragX = event.clientX;
     lastDragY = event.clientY;
+    const anchorFracX = (event.clientX - rect.left) / rect.width;
     // Content follows the pointer on both axes: dragging right reveals
     // lower origins, and dragging down zooms in — zooming in scales the
     // pyramid about its top edge, so its content moves down the screen.
-    applyPan(-dxCanvasPixels / (renderer.canvasSize / 2));
-    applyZoomAt(dyCanvasPixels / ZOOM_DRAG_PIXELS, (event.clientX - rect.left) / rect.width);
+    const appliedPan = applyPanRaw(-dxCanvasPixels / (renderer.canvasSize / 2));
+    const appliedZoom = applyZoomRaw(dyCanvasPixels / ZOOM_DRAG_PIXELS, anchorFracX);
+    trackVelocity(appliedPan, appliedZoom, dt, anchorFracX);
     draw();
   }
 });
@@ -165,23 +232,94 @@ canvas.addEventListener(
   'wheel',
   (event) => {
     event.preventDefault();
+    panVelocity = 0;
+    zoomVelocity = 0;
     const rect = canvas.getBoundingClientRect();
     // Scroll up = zoom in, the usual desktop convention. (Deliberately the
     // opposite sense from vertical drag, which follows the finger instead.)
-    applyZoomAt(-event.deltaY * ZOOM_SPEED, (event.clientX - rect.left) / rect.width);
+    applyZoomRaw(-event.deltaY * ZOOM_SPEED, (event.clientX - rect.left) / rect.width);
     draw();
   },
   {passive: false},
 );
 
 zoomOutButton.addEventListener('click', () => {
+  panVelocity = 0;
+  zoomVelocity = 0;
   camera = zoomBy(camera, -1);
   draw();
 });
 
 resetButton.addEventListener('click', () => {
+  panVelocity = 0;
+  zoomVelocity = 0;
+  overscrollXPixels = 0;
+  overscrollZoomOut = 0;
   camera = makeCamera();
   draw();
 });
 
+// --- Motion loop: always running. Applies decaying inertia once all
+// pointers have lifted, and decays overscroll back to 0 unconditionally
+// (so it springs back even mid-drag, e.g. dragging away from the edge). ---
+
+const FRAME_MS_REF = 1000 / 60;
+const PAN_VELOCITY_DECAY = 0.94;
+const ZOOM_VELOCITY_DECAY = 0.94;
+const OVERSCROLL_DECAY = 0.82;
+const MIN_PAN_VELOCITY = 0.00003;
+const MIN_ZOOM_VELOCITY = 0.00003;
+const MIN_OVERSCROLL_PX = 0.3;
+const MIN_OVERSCROLL_ZOOM = 0.001;
+
+let lastMotionTimestamp = performance.now();
+
+function motionTick(t: number): void {
+  const dt = Math.min(48, t - lastMotionTimestamp); // cap dt (e.g. after tab switch)
+  lastMotionTimestamp = t;
+  const frames = dt / FRAME_MS_REF;
+
+  let changed = false;
+
+  // Inertia only applies while no pointer is active — during a live drag,
+  // pointermove already applies motion directly, at full responsiveness.
+  if (activePointers.size === 0) {
+    if (Math.abs(panVelocity) > MIN_PAN_VELOCITY) {
+      applyPanRaw(panVelocity * dt);
+      panVelocity *= PAN_VELOCITY_DECAY ** frames;
+      changed = true;
+    } else if (panVelocity !== 0) {
+      panVelocity = 0;
+    }
+
+    if (Math.abs(zoomVelocity) > MIN_ZOOM_VELOCITY) {
+      applyZoomRaw(zoomVelocity * dt, velocityAnchorFracX);
+      zoomVelocity *= ZOOM_VELOCITY_DECAY ** frames;
+      changed = true;
+    } else if (zoomVelocity !== 0) {
+      zoomVelocity = 0;
+    }
+  }
+
+  if (overscrollXPixels > MIN_OVERSCROLL_PX) {
+    overscrollXPixels *= OVERSCROLL_DECAY ** frames;
+    changed = true;
+  } else if (overscrollXPixels !== 0) {
+    overscrollXPixels = 0;
+    changed = true;
+  }
+
+  if (overscrollZoomOut > MIN_OVERSCROLL_ZOOM) {
+    overscrollZoomOut *= OVERSCROLL_DECAY ** frames;
+    changed = true;
+  } else if (overscrollZoomOut !== 0) {
+    overscrollZoomOut = 0;
+    changed = true;
+  }
+
+  if (changed) draw();
+  requestAnimationFrame(motionTick);
+}
+
 draw();
+requestAnimationFrame(motionTick);

@@ -106,51 +106,56 @@ than discrete jumps.
     zoom still visually anchors to a fixed corner (whichever child the
     camera is about to descend into), not to wherever your fingers are —
     revisit if it feels wrong in practice.
-[ ] Add inertia on top of step 2's interaction, plus real rubber-band
-    overshoot at the root/min-zoom boundary (a small bounce past the edge
-    that eases back to zero on release) — folded in here rather than
-    built separately, since both need the same live animation loop.
-    Interim fix already in place: `dampPanDelta`/`dampZoomDelta` in
-    camera.ts scale an input delta by the current distance from the edge
-    (`frac`/`zoomFrac`), so drifting back toward the boundary decelerates
-    smoothly. It has a real gap the rubber-band work should close: sitting
-    exactly at the edge (frac=0, e.g. the untouched default view), that
-    scaling factor is 0, so the very first pixel of a boundary-ward drag
-    is still fully absorbed rather than giving a little.
-    Also added: single-finger vertical drag now zooms, combined with
-    horizontal pan in the same gesture — mirrors how pinch already
-    combines both.
+[x] Add inertia on top of step 2's interaction, plus real rubber-band
+    overshoot at the root/min-zoom boundary.
 
-### Zoom anchoring (learned the hard way)
+    **Inertia**: pan/zoom velocity is an exponential moving average (alpha
+    0.35) of applied-delta-per-ms, updated on every pointermove (drag or
+    pinch alike). A single `requestAnimationFrame` loop runs continuously
+    from startup rather than being started/stopped per gesture: it applies
+    decaying velocity (`** frames`, normalized to ~60fps regardless of
+    actual frame timing) only while `activePointers.size === 0`, so a live
+    drag's own pointermove handler (full responsiveness, no EMA lag) and
+    the inertia tail never fight over the same frame. A new pointerdown
+    zeroes velocity immediately -- touching the screen always kills a
+    fling, like a real touchscreen, rather than waiting for the loop to
+    notice `activePointers` became nonzero.
 
-The renderer can only scale about the canvas's top-left corner, and that
-is forced, not a preference: `frac' = 2*frac - c` maps the window's LEFT
-edge to the same world point across a zoom rebase, and `bottomGen + 1`
-does the same for the TOP edge. An early version picked the scale anchor
-per-frame (`frac < 0.5 ? left : right` corner), which made the render
-disagree with the rebase — the whole image jumped ~30% of its width the
-instant `frac` crossed 0.5 mid-zoom, and zooming visibly dragged content
-sideways.
+    **Rubber-band overscroll**: stayed a pure render-time visual, layered
+    on an *unchanged* hard-clamped camera -- deliberately not the "let
+    frac go negative" design floated earlier, which would have needed a
+    left buffer margin and made the render's crop math boundary-aware.
+    Instead `overscrollXPixels`/`overscrollZoomOut` grow from whatever
+    `dampPanDelta`/`dampZoomDelta` *absorbed* (`raw - damped`), via
+    diminishing-returns growth (`pullOverscroll`: full sensitivity near 0,
+    asymptotic toward a cap, e.g. 80px / 0.35 generations) so repeated
+    pushes can't blow past the cap. The renderer takes them as an extra
+    screen-space translate (pan) and scale reduction (zoom), always
+    painting an explicit white fill first (not `clearRect`) since
+    revealing past the buffer's edge needs to read as "nothing there,"
+    not a transparency bug. Decay (`0.82 ** frames`) runs unconditionally
+    in the same animation-frame loop as inertia, every frame, regardless
+    of whether a drag is active -- closing the exact gap flagged earlier:
+    sitting exactly at frac=0 (the untouched default view) used to fully
+    absorb the very first pixel of a boundary-ward drag with zero visual
+    feedback; now that absorbed delta is what feeds overscroll growth, so
+    the first pixel already shows give.
 
-To zoom about the cursor/pinch midpoint anyway, the *camera* compensates
-with a pan (`zoomAtAnchor`): the window's width changes by `shrink`
-cells and the left edge absorbs `anchorFracX` of that change before the
-zoom applies. Panning first lets `zoomBy`'s rebase convert `frac` into
-the new generation's units for free. This is what decouples the axes
-perceptually — a pure vertical drag now leaves the point under the
-finger fixed, even though `origin`/`frac` (which track the left edge)
-necessarily keep moving as the window narrows.
+    Verified in-browser: a fast flick keeps moving well past release and
+    decays smoothly (frac 0.563 at release -> new origin reached at
+    +100ms -> further still at +500ms); pushing into the root boundary
+    reveals a growing blank margin (up to ~29px in testing) that fully
+    springs back within ~600ms of release; the same holds for zoom-out
+    past the minimum generation (blank margin up to ~43px, settling back
+    to ~1px); a single small push from the untouched default view already
+    shows visible give (23px), closing the dead-zone gap; and tapping
+    down again mid-fling stops all motion dead, confirmed by two readings
+    taken strictly after the tap (avoiding a timing artifact where
+    Playwright's own command latency let real inertia run unaccounted-for
+    between an earlier "mid-fling" read and the tap itself).
 
-Vertical drag direction is content-follows-finger, same as horizontal:
-zooming in scales the pyramid about its top edge, so its content moves
-*down* the screen — therefore drag down = zoom in. Wheel deliberately
-keeps the opposite, standard desktop sense (scroll up = zoom in).
-
-Note for the tile-cache work: camera-state continuity and *rendered*
-continuity are different properties. The corner-flip bug left camera
-state perfectly smooth and only corrupted the render transform, so
-readout-based checks can't see it — it needs a pixel diff under
-sub-pixel input steps (a jump shows as one step changing >50% of pixels
-against a ~2% median).
+    Also added: single-finger vertical drag now zooms (up = in, matching
+    the layout's own "up = finer generations"), combined with horizontal
+    pan in the same gesture -- mirrors how pinch already combines both.
 [ ] Add the tile cache + compositing for performance.
 [ ] Iterate: placeholder fade-in, edge clamping polish, tune inertia feel.
