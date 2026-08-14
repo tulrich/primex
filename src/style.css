@@ -9,7 +9,7 @@ body {
   flex-direction: column;
   align-items: center;
   gap: 0.75rem;
-  padding: 1.5rem;
+  padding: 0.75rem;
   box-sizing: border-box;
   background: #ffffff;
   color: #111111;
@@ -20,6 +20,10 @@ h1 {
   font-size: 1.25rem;
   font-weight: 600;
   margin: 0;
+}
+
+h1 .tagline {
+  font-weight: 400;
 }
 
 #canvas-wrap {
@@ -46,6 +50,19 @@ h1 {
 
 #readout .range {
   color: #666666;
+}
+
+#selected {
+  font-variant-numeric: tabular-nums;
+  font-size: 0.95rem;
+  text-align: center;
+  overflow-wrap: anywhere;
+  max-width: 90vw;
+}
+
+#selected .value {
+  color: #2563eb;
+  font-weight: 600;
 }
 
 #controls {

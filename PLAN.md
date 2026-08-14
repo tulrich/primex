@@ -159,3 +159,32 @@ than discrete jumps.
     pan in the same gesture -- mirrors how pinch already combines both.
 [ ] Add the tile cache + compositing for performance.
 [ ] Iterate: placeholder fade-in, edge clamping polish, tune inertia feel.
+
+## UI pass (headline, layout, tap-to-select)
+
+Tagline in the headline, tighter body padding, a line break after the
+origin number in the debug readout (it can get very long), dropped the
+zoom-out button (drag/pinch/wheel cover it), and minimal help text.
+
+Tap-to-select: a "tap" is a single pointer whose down/up positions are
+within 8px of each other and never joined by a second pointer (ruling out
+drags and pinches) — checked once at release, not tracked continuously
+through movement. Tapping a prime cell highlights it with a blue border
+and shows "selected prime: N" below (line-broken after the label, since
+N can be arbitrarily large at depth); tapping a non-prime cell or missing
+entirely clears/leaves the selection.
+
+Selection is stored as `(n, gen)` — an absolute generation number, same
+idea as `camera.bottomGen` — never a screen position, so the highlight
+re-locates correctly every frame as the camera pans/zooms, and simply
+stops rendering once the cell scrolls out of the visible row range.
+
+The hit-test math (screen point -> cell) and the highlight's forward math
+(cell -> screen rect) are exact inverses by construction, so they're
+tested as a pair: `selectionScreenRect`/`hitTestAt` in view.ts are pure
+functions (rows/canvasSize as plain-number params, no DOM canvas touched)
+specifically so they're unit-testable without jsdom. view.test.ts sweeps
+every on-screen cell across 5 cameras x 3 overscroll states and confirms
+tapping the center of each cell's forward-computed rect returns that same
+cell — the same "verify the invariant across a matrix of states," not
+just a few examples, that caught the zoom-anchor bug earlier.

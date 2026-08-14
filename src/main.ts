@@ -1,36 +1,23 @@
-import {
-  makeCamera,
-  panBy,
-  zoomBy,
-  zoomAtAnchor,
-  dampPanDelta,
-  dampZoomDelta,
-  MIN_ORIGIN,
-  MIN_BOTTOM_GEN,
-  type Camera,
-} from './camera';
-import {CameraRenderer} from './view';
+import {makeCamera, panBy, zoomAtAnchor, dampPanDelta, dampZoomDelta, type Camera} from './camera';
+import {CameraRenderer, type Selection} from './view';
 
 const app = document.querySelector<HTMLDivElement>('#app');
 if (!app) throw new Error('missing #app root');
 
 app.innerHTML = `
-  <h1>primex</h1>
+  <h1>primex<span class="tagline"> - exploring the prime numbers</span></h1>
   <div id="canvas-wrap"><canvas id="view"></canvas></div>
   <div id="readout"></div>
+  <div id="selected"></div>
   <div id="controls">
-    <button id="zoom-out">Zoom out</button>
     <button id="reset">Reset</button>
   </div>
-  <p id="help">
-    Drag sideways to pan, down to zoom in, up to zoom out.
-    Pinch or scroll to zoom too.
-  </p>
+  <p id="help">Drag to explore.</p>
 `;
 
 const canvas = document.querySelector<HTMLCanvasElement>('#view')!;
 const readout = document.querySelector<HTMLDivElement>('#readout')!;
-const zoomOutButton = document.querySelector<HTMLButtonElement>('#zoom-out')!;
+const selectedEl = document.querySelector<HTMLDivElement>('#selected')!;
 const resetButton = document.querySelector<HTMLButtonElement>('#reset')!;
 const ctx = canvas.getContext('2d');
 if (!ctx) throw new Error('2d canvas context unavailable');
@@ -40,6 +27,7 @@ canvas.width = renderer.canvasSize;
 canvas.height = renderer.canvasSize;
 
 let camera: Camera = makeCamera();
+let selected: Selection | null = null;
 
 // --- Overscroll: purely a render-time visual, layered on top of an
 // unchanged, hard-clamped camera. Grows from whatever dampPanDelta/
@@ -61,12 +49,13 @@ function pullOverscroll(current: number, deltaMagnitude: number, max: number): n
 }
 
 function draw(): void {
-  renderer.draw(ctx!, camera, overscrollXPixels, overscrollZoomOut);
+  renderer.draw(ctx!, camera, overscrollXPixels, overscrollZoomOut, selected);
 
-  readout.textContent =
-    `origin ${camera.origin}  ·  gen ${camera.bottomGen}  ·  ` +
-    `frac ${camera.frac.toFixed(3)}  ·  zoomFrac ${camera.zoomFrac.toFixed(3)}`;
-  zoomOutButton.disabled = camera.origin <= MIN_ORIGIN && camera.bottomGen <= MIN_BOTTOM_GEN;
+  readout.innerHTML =
+    `origin ${camera.origin}<br>` +
+    `gen ${camera.bottomGen}  ·  frac ${camera.frac.toFixed(3)}  ·  zoomFrac ${camera.zoomFrac.toFixed(3)}`;
+
+  selectedEl.innerHTML = selected ? `selected prime:<br><span class="value">${selected.n}</span>` : '';
 }
 
 // --- Pan/zoom via pointer events: one active pointer drags — sideways
@@ -115,6 +104,17 @@ let pinchLastDist = 0;
 let pinchLastMidX = 0;
 let lastGestureTimestamp = 0;
 
+// --- Tap-to-select: a "tap" is a single pointer that barely moved between
+// down and up (not a drag, not part of a pinch). Selection is tracked as
+// (n, gen) rather than a screen position — see Selection in view.ts — so
+// it stays correctly placed as the camera moves on its own. ---
+
+const TAP_MOVE_THRESHOLD_PX = 8;
+let tapPointerId: number | null = null;
+let tapStartX = 0;
+let tapStartY = 0;
+let tapDisqualified = false;
+
 // --- Velocity + inertia: an exponential moving average of applied motion
 // per millisecond, fed by every pointermove (drag or pinch alike), and
 // consumed by the always-running motion loop once all pointers lift. ---
@@ -161,6 +161,16 @@ canvas.addEventListener('pointerdown', (event) => {
   activePointers.set(event.pointerId, {x: event.clientX, y: event.clientY});
   beginGesture(event.pointerId);
   lastGestureTimestamp = event.timeStamp;
+
+  if (activePointers.size === 1) {
+    tapPointerId = event.pointerId;
+    tapStartX = event.clientX;
+    tapStartY = event.clientY;
+    tapDisqualified = false;
+  } else {
+    // A second pointer means this gesture is a pinch, never a tap.
+    tapDisqualified = true;
+  }
   // Best-effort: keeps receiving move/up events if the pointer leaves the
   // canvas mid-gesture. Not essential to gesture tracking, so a failure
   // here (e.g. an already-released pointer) shouldn't drop the pointer.
@@ -215,6 +225,19 @@ canvas.addEventListener('pointermove', (event) => {
 });
 
 function releasePointer(event: PointerEvent): void {
+  if (
+    event.pointerId === tapPointerId &&
+    !tapDisqualified &&
+    Math.hypot(event.clientX - tapStartX, event.clientY - tapStartY) <= TAP_MOVE_THRESHOLD_PX
+  ) {
+    const rect = canvas.getBoundingClientRect();
+    const canvasX = (event.clientX - rect.left) * (renderer.canvasSize / rect.width);
+    const canvasY = (event.clientY - rect.top) * (renderer.canvasSize / rect.height);
+    selected = renderer.hitTest(camera, canvasX, canvasY, overscrollXPixels, overscrollZoomOut);
+    draw();
+  }
+  tapPointerId = null;
+
   activePointers.delete(event.pointerId);
   if (dragPointerId === event.pointerId) dragPointerId = null;
   const remaining = [...activePointers.keys()];
@@ -243,19 +266,13 @@ canvas.addEventListener(
   {passive: false},
 );
 
-zoomOutButton.addEventListener('click', () => {
-  panVelocity = 0;
-  zoomVelocity = 0;
-  camera = zoomBy(camera, -1);
-  draw();
-});
-
 resetButton.addEventListener('click', () => {
   panVelocity = 0;
   zoomVelocity = 0;
   overscrollXPixels = 0;
   overscrollZoomOut = 0;
   camera = makeCamera();
+  selected = null;
   draw();
 });
 

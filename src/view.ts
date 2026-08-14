@@ -96,7 +96,97 @@ function drawRows(ctx: CanvasRenderingContext2D, width: number, height: number, 
  * shifts and shrinks the content a little (revealing white at the edge)
  * without the underlying camera state ever leaving its hard clamp. See
  * main.ts for how these grow and decay.
+ *
+ * `selected`, if given, highlights one integer's cell with a blue border
+ * — tracked as (n, gen) rather than a screen position, so it stays
+ * correctly placed as the camera moves and simply stops being drawn once
+ * panned/zoomed out of the visible row range. hitTest() is the inverse:
+ * screen point -> which integer's cell contains it.
  */
+export interface Selection {
+  readonly n: bigint;
+  /** Absolute generation (camera.bottomGen + row-index at the time this
+   * cell was picked), not derived from n's bit length — same reasoning
+   * as camera.ts's bottomGen: it must stay stable as the camera pans. */
+  readonly gen: number;
+}
+
+interface ScreenRect {
+  readonly x: number;
+  readonly y: number;
+  readonly size: number;
+}
+
+/**
+ * Where `selected`'s cell currently sits in canvas-pixel space, or null if
+ * it's not in the visible row range (panned/zoomed away) — pure geometry,
+ * factored out of draw() so it's unit-testable without a DOM canvas. This
+ * and hitTestAt() are exact inverses of each other by construction (see
+ * the round-trip tests in view.test.ts) — that property is what matters,
+ * more than either formula individually.
+ */
+export function selectionScreenRect(
+  rows: number,
+  canvasSize: number,
+  camera: Camera,
+  selected: Selection,
+  overscrollXPixels: number,
+  overscrollZoomOut: number,
+): ScreenRect | null {
+  const j = selected.gen - camera.bottomGen;
+  if (j < 0 || j >= rows) return null;
+
+  const row = layoutRows(camera.origin, rows)[rows - 1 - j];
+  const c = selected.n - camera.origin * 2n ** BigInt(j);
+  if (c < 0n || c >= BigInt(row.cellCount)) return null;
+
+  const zoomScale = 2 ** (camera.zoomFrac - overscrollZoomOut);
+  const cropX = camera.frac * (canvasSize / 2);
+  const bufX = Number(c) * row.height;
+
+  return {
+    x: (bufX - cropX) * zoomScale + overscrollXPixels,
+    y: row.top * zoomScale,
+    size: row.height * zoomScale,
+  };
+}
+
+/**
+ * Inverse of draw()'s transform: given a point in canvas-pixel space
+ * (same units as `canvasSize`), returns the prime integer whose cell
+ * contains it — or null if the point misses (blank cap row, out of buffer
+ * bounds) or lands on a non-prime cell.
+ */
+export function hitTestAt(
+  rows: number,
+  canvasSize: number,
+  camera: Camera,
+  canvasX: number,
+  canvasY: number,
+  overscrollXPixels: number,
+  overscrollZoomOut: number,
+): Selection | null {
+  const zoomScale = 2 ** (camera.zoomFrac - overscrollZoomOut);
+  const bufX = (canvasX - overscrollXPixels) / zoomScale + camera.frac * (canvasSize / 2);
+  const bufY = canvasY / zoomScale;
+
+  if (bufY < 1) return null; // Blank cap row.
+
+  const rowList = layoutRows(camera.origin, rows);
+  for (let idx = 0; idx < rowList.length; idx++) {
+    const row = rowList[idx];
+    if (bufY >= row.top && bufY < row.top + row.height) {
+      const c = Math.floor(bufX / row.height);
+      if (c < 0 || c >= row.cellCount) return null;
+      const n = row.start + BigInt(c);
+      if (!isPrime(n)) return null;
+      const j = rows - 1 - idx;
+      return {n, gen: camera.bottomGen + j};
+    }
+  }
+  return null;
+}
+
 export class CameraRenderer {
   readonly rows: number;
   readonly canvasSize: number;
@@ -130,6 +220,7 @@ export class CameraRenderer {
     camera: Camera,
     overscrollXPixels = 0,
     overscrollZoomOut = 0,
+    selected: Selection | null = null,
   ): void {
     this.ensureBuffer(camera.origin, camera.bottomGen);
 
@@ -142,17 +233,52 @@ export class CameraRenderer {
     ctx.fillRect(0, 0, size, size);
 
     const zoomScale = 2 ** (camera.zoomFrac - overscrollZoomOut);
+    const cropX = camera.frac * (size / 2);
 
     ctx.save();
     // Overscroll translate goes first (screen-space pixels, unaffected by
     // the scale below), then the corner-anchored zoom as usual.
     ctx.translate(overscrollXPixels, 0);
     ctx.scale(zoomScale, zoomScale);
-    ctx.drawImage(this.buffer, camera.frac * (size / 2), 0, size, size, 0, 0, size, size);
+    ctx.drawImage(this.buffer, cropX, 0, size, size, 0, 0, size, size);
     ctx.restore();
 
     ctx.strokeStyle = '#000000';
     ctx.lineWidth = 1;
     ctx.strokeRect(0.5, 0.5, size - 1, size - 1);
+
+    if (selected) {
+      const rect = selectionScreenRect(
+        this.rows,
+        this.canvasSize,
+        camera,
+        selected,
+        overscrollXPixels,
+        overscrollZoomOut,
+      );
+      if (rect) {
+        ctx.strokeStyle = '#2563eb';
+        ctx.lineWidth = 3;
+        ctx.strokeRect(rect.x, rect.y, rect.size, rect.size);
+      }
+    }
+  }
+
+  hitTest(
+    camera: Camera,
+    canvasX: number,
+    canvasY: number,
+    overscrollXPixels: number,
+    overscrollZoomOut: number,
+  ): Selection | null {
+    return hitTestAt(
+      this.rows,
+      this.canvasSize,
+      camera,
+      canvasX,
+      canvasY,
+      overscrollXPixels,
+      overscrollZoomOut,
+    );
   }
 }
