@@ -1,5 +1,15 @@
-import {makeCamera, panBy, zoomAtAnchor, dampPanDelta, dampZoomDelta, type Camera} from './camera';
+import {
+  makeCamera,
+  panBy,
+  zoomAtAnchor,
+  dampPanDelta,
+  dampZoomDelta,
+  MIN_ORIGIN,
+  MIN_BOTTOM_GEN,
+  type Camera,
+} from './camera';
 import {CameraRenderer, type Selection} from './view';
+import {isPrime} from './primes';
 
 const app = document.querySelector<HTMLDivElement>('#app');
 if (!app) throw new Error('missing #app root');
@@ -26,8 +36,62 @@ const renderer = new CameraRenderer();
 canvas.width = renderer.canvasSize;
 canvas.height = renderer.canvasSize;
 
-let camera: Camera = makeCamera();
-let selected: Selection | null = null;
+// --- URL hash: encodes enough to reproduce the current view so it's
+// shareable — read once on load, written back (debounced) whenever the
+// view changes. Only origin and the selected prime are encoded, not the
+// exact mid-gesture frac/zoomFrac/bottomGen; a shared link reconstructs
+// bottomGen from origin's own bit length (origin's "natural" generation),
+// which is a reasonable fresh starting point even though the camera
+// itself deliberately doesn't derive bottomGen that way during live
+// panning (see the note on that in camera.ts). ---
+
+function parseHashOrigin(): bigint | null {
+  const raw = new URLSearchParams(location.hash.slice(1)).get('origin');
+  if (!raw) return null;
+  try {
+    const origin = BigInt(raw);
+    return origin >= MIN_ORIGIN ? origin : null;
+  } catch {
+    return null; // Malformed value in a hand-edited or corrupted URL.
+  }
+}
+
+function cameraFromHash(): Camera {
+  const origin = parseHashOrigin();
+  if (origin === null) return makeCamera();
+  return makeCamera(origin, origin.toString(2).length - 1);
+}
+
+function selectionFromHash(): Selection | null {
+  const raw = new URLSearchParams(location.hash.slice(1)).get('selected');
+  if (!raw) return null;
+  try {
+    const n = BigInt(raw);
+    // Validate primality rather than trust the URL — a hand-edited or
+    // stale link shouldn't be able to show a false "selected prime".
+    if (n < 2n || !isPrime(n)) return null;
+    return {n, gen: n.toString(2).length - 1};
+  } catch {
+    return null;
+  }
+}
+
+const HASH_SYNC_DEBOUNCE_MS = 300;
+let hashSyncTimer: number | null = null;
+
+function scheduleHashSync(): void {
+  if (hashSyncTimer !== null) clearTimeout(hashSyncTimer);
+  hashSyncTimer = window.setTimeout(() => {
+    hashSyncTimer = null;
+    const params = new URLSearchParams();
+    params.set('origin', camera.origin.toString());
+    if (selected) params.set('selected', selected.n.toString());
+    history.replaceState(null, '', '#' + params.toString());
+  }, HASH_SYNC_DEBOUNCE_MS);
+}
+
+let camera: Camera = cameraFromHash();
+let selected: Selection | null = selectionFromHash();
 
 // --- Overscroll: purely a render-time visual, layered on top of an
 // unchanged, hard-clamped camera. Grows from whatever dampPanDelta/
@@ -48,14 +112,24 @@ function pullOverscroll(current: number, deltaMagnitude: number, max: number): n
   return Math.min(max, current + deltaMagnitude * room);
 }
 
+/** Decimal digit count, e.g. "1 digit" / "7 digits". */
+function digits(n: bigint): string {
+  const count = n.toString().length;
+  return `${count} digit${count === 1 ? '' : 's'}`;
+}
+
 function draw(): void {
   renderer.draw(ctx!, camera, overscrollXPixels, overscrollZoomOut, selected);
 
   readout.innerHTML =
-    `origin ${camera.origin}<br>` +
+    `origin ${camera.origin} (${digits(camera.origin)})<br>` +
     `gen ${camera.bottomGen}  ·  frac ${camera.frac.toFixed(3)}  ·  zoomFrac ${camera.zoomFrac.toFixed(3)}`;
 
-  selectedEl.innerHTML = selected ? `selected prime:<br><span class="value">${selected.n}</span>` : '';
+  selectedEl.innerHTML = selected
+    ? `selected prime:<br><span class="value">${selected.n}</span> (${digits(selected.n)})`
+    : '';
+
+  scheduleHashSync();
 }
 
 // --- Pan/zoom via pointer events: one active pointer drags — sideways
@@ -213,13 +287,21 @@ canvas.addEventListener('pointermove', (event) => {
     const dyCanvasPixels = (event.clientY - lastDragY) * canvasPixelsPerCssPixel;
     lastDragX = event.clientX;
     lastDragY = event.clientY;
-    const anchorFracX = (event.clientX - rect.left) / rect.width;
     // Content follows the pointer on both axes: dragging right reveals
     // lower origins, and dragging down zooms in — zooming in scales the
     // pyramid about its top edge, so its content moves down the screen.
+    //
+    // Zoom anchor is fixed at center (0.5), NOT the live cursor X: that X
+    // is simultaneously driving the pan above, so anchoring zoom to it
+    // would make zoomAtAnchor's own pan-to-preserve-the-anchor compound
+    // with the explicit pan every frame — any vertical motion during an
+    // otherwise-horizontal drag (inevitable off-center, even from tiny
+    // jitter) would inject a second, coupled horizontal drift. Pinch's
+    // anchor is the midpoint of two fingers, a real independent
+    // reference, so it doesn't have this problem and stays live.
     const appliedPan = applyPanRaw(-dxCanvasPixels / (renderer.canvasSize / 2));
-    const appliedZoom = applyZoomRaw(dyCanvasPixels / ZOOM_DRAG_PIXELS, anchorFracX);
-    trackVelocity(appliedPan, appliedZoom, dt, anchorFracX);
+    const appliedZoom = applyZoomRaw(dyCanvasPixels / ZOOM_DRAG_PIXELS, 0.5);
+    trackVelocity(appliedPan, appliedZoom, dt, 0.5);
     draw();
   }
 });
@@ -302,16 +384,27 @@ function motionTick(t: number): void {
   // pointermove already applies motion directly, at full responsiveness.
   if (activePointers.size === 0) {
     if (Math.abs(panVelocity) > MIN_PAN_VELOCITY) {
+      // Check the boundary BEFORE applying: if we're already resting at
+      // the root and still pushing into it, this hit absorbs into
+      // overscroll once (applyPanRaw) and then kills velocity outright,
+      // rather than let it decay naturally over many more frames while
+      // re-triggering overscroll growth each tick — that's what read as
+      // "overshoots and rests slightly positive instead of at the
+      // border": overscroll's own decay (0.82/frame) is faster than
+      // velocity's (0.94/frame), so leftover velocity kept re-feeding a
+      // small amount back in every frame, faster than it could settle.
+      const pushingIntoRoot = camera.origin <= MIN_ORIGIN && panVelocity < 0;
       applyPanRaw(panVelocity * dt);
-      panVelocity *= PAN_VELOCITY_DECAY ** frames;
+      panVelocity = pushingIntoRoot ? 0 : panVelocity * PAN_VELOCITY_DECAY ** frames;
       changed = true;
     } else if (panVelocity !== 0) {
       panVelocity = 0;
     }
 
     if (Math.abs(zoomVelocity) > MIN_ZOOM_VELOCITY) {
+      const pushingIntoMinZoom = camera.bottomGen <= MIN_BOTTOM_GEN && zoomVelocity < 0;
       applyZoomRaw(zoomVelocity * dt, velocityAnchorFracX);
-      zoomVelocity *= ZOOM_VELOCITY_DECAY ** frames;
+      zoomVelocity = pushingIntoMinZoom ? 0 : zoomVelocity * ZOOM_VELOCITY_DECAY ** frames;
       changed = true;
     } else if (zoomVelocity !== 0) {
       zoomVelocity = 0;

@@ -188,3 +188,58 @@ every on-screen cell across 5 cameras x 3 overscroll states and confirms
 tapping the center of each cell's forward-computed rect returns that same
 cell — the same "verify the invariant across a matrix of states," not
 just a few examples, that caught the zoom-anchor bug earlier.
+
+## Reported-drift fixes, digit counts, shareable URLs
+
+Two real bugs found from actual usage, plus two small features.
+
+**Vertical drift while panning right.** Root cause: single-finger drag's
+zoom used the *live cursor X* as `zoomAtAnchor`'s anchor — but that same
+X is simultaneously driving the horizontal pan, so any vertical
+component at all (even tiny, off-center jitter during an intended pure
+horizontal drag) triggered zoomAtAnchor's own internal pan-to-preserve-
+the-anchor, compounding with the explicit pan every frame. Fixed by
+pinning single-drag zoom to a fixed center anchor (0.5) — decouples the
+axes completely, since the compensating pan is now a fixed proportion of
+the zoom amount rather than tied to wherever the finger happens to be.
+Pinch keeps its live midpoint anchor; that's a real independent
+reference (two fingers), not the same coordinate driving something else.
+Verified with synthetic pointer events carrying identical fixed
+timestamps (deterministic, unlike real mouse timing) — the same
+drag path from two different starting X positions now produces
+byte-identical results.
+
+**Overscroll "overshoots and rests slightly positive."** Root cause:
+overscroll's own decay (0.82/frame) is faster than pan/zoom velocity's
+decay (0.94/frame), so while inertia was still coasting into an
+already-clamped boundary, each frame re-fed a small amount of overscroll
+growth (via the same raw-minus-damped absorption as the original damping
+work) faster than it could settle — reads as lingering just above zero
+instead of resting at the border. Fixed by checking the boundary
+*before* applying an inertia tick: if we're already at the root/min-zoom
+and still pushing into it, that hit absorbs into overscroll once and then
+kills velocity outright, rather than let it decay naturally over many
+more frames while re-triggering growth each tick. Verified: overscroll
+now reaches exactly 0 within ~200ms of release and stays there (sampled
+every 100ms for 2s).
+
+**Digit counts.** `origin` and `selected prime` now show
+`(N digits)` next to the value — decimal digits, pluralized.
+
+**Shareable URLs.** `origin` and `selected` (if any) are written to
+`location.hash` via `history.replaceState` (never `pushState` — no new
+history entries per drag frame) and read back once on load. Two
+robustness choices: writes are debounced (300ms of quiet after the last
+`draw()`) rather than per-frame, both because a URL mid-fling isn't a
+meaningful "view" to share and because browsers rate-limit rapid
+`history.replaceState` calls (verified: hash stays empty while inertia
+is still coasting, e.g. through 1500ms in one test run, and appears the
+moment motion actually settles — not a bug, the debounce working as
+intended). And a restored `selected` is re-validated with `isPrime`
+rather than trusted from the URL, so a hand-edited or stale link can't
+show a false "selected prime"; malformed BigInt input falls back to
+defaults the same way. `bottomGen` on restore is *not* preserved
+exactly — it's reconstructed from origin's own bit length, a reasonable
+fresh starting point for a shared link even though the live camera
+deliberately avoids deriving bottomGen that way during panning (see the
+note on that in camera.ts).
