@@ -368,3 +368,11 @@ to 0 over ~180 frames; at rest with `frac = 0.4` (inside the new 1/2
 weak zone, outside 1/4) it stays exactly put with zero velocity, and
 only nudges (0.4 -> ~0.30) while residual velocity is still nonzero,
 same as before just rescaled to the wider bands.
+
+## Boundary-snap bias: dialed back to 1/6 strong, 1/3 weak
+
+1/4-and-1/2 read as "a little too big" — settled between the two
+tried-so-far pairs (1/8-1/4, 1/4-1/2) at `SNAP_STRONG_PROXIMITY = 1/6`,
+`SNAP_WEAK_PROXIMITY = 1/3`. Everything else (the at-rest gating in
+`snapStrength`, the velocity ramp, per-axis independence) is unchanged
+— this is purely a constants tweak.
