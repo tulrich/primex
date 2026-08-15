@@ -56,18 +56,38 @@ function layoutRows(origin: bigint, rows: number): Row[] {
   return result;
 }
 
-function drawRows(ctx: CanvasRenderingContext2D, width: number, height: number, rows: Row[]): void {
+function fillRowCells(ctx: CanvasRenderingContext2D, row: Row, cStart: number, cEnd: number): void {
+  for (let c = cStart; c < cEnd; c++) {
+    const n = row.start + BigInt(c);
+    if (isPrime(n)) {
+      ctx.fillRect(c * row.height, row.top, row.height, row.height);
+    }
+  }
+}
+
+/**
+ * Draws `rows` (primality-testing only the cells that fall in it), clipped
+ * to the horizontal pixel range [xStart, xEnd) and white-filling that same
+ * strip across `bufferHeight` first. Used both for a full-buffer redraw
+ * (rows = all of them, xStart/xEnd = the whole width) and for redrawing
+ * just a newly-exposed margin strip after CameraRenderer reuses the rest
+ * of a previous buffer — see ensureBuffer.
+ */
+function drawRowsRange(
+  ctx: CanvasRenderingContext2D,
+  rows: Row[],
+  xStart: number,
+  xEnd: number,
+  bufferHeight: number,
+): void {
   ctx.fillStyle = '#ffffff';
-  ctx.fillRect(0, 0, width, height);
+  ctx.fillRect(xStart, 0, xEnd - xStart, bufferHeight);
 
   ctx.fillStyle = '#000000';
   for (const row of rows) {
-    for (let c = 0; c < row.cellCount; c++) {
-      const n = row.start + BigInt(c);
-      if (isPrime(n)) {
-        ctx.fillRect(c * row.height, row.top, row.height, row.height);
-      }
-    }
+    const cStart = Math.max(0, Math.floor(xStart / row.height));
+    const cEnd = Math.min(row.cellCount, Math.ceil(xEnd / row.height));
+    fillRowCells(ctx, row, cStart, cEnd);
   }
 }
 
@@ -193,6 +213,12 @@ export class CameraRenderer {
 
   private readonly buffer: HTMLCanvasElement;
   private readonly bufferCtx: CanvasRenderingContext2D;
+  // Scratch space for panShift/zoomInShift's blit-then-redraw: copying the
+  // reusable part of the old buffer out before overwriting it, rather than
+  // relying on same-canvas drawImage's (spec-legal but engine-dependent)
+  // self-overlap semantics.
+  private readonly scratch: HTMLCanvasElement;
+  private readonly scratchCtx: CanvasRenderingContext2D;
   private cachedOrigin: bigint | null = null;
   private cachedBottomGen: number | null = null;
 
@@ -205,14 +231,129 @@ export class CameraRenderer {
     this.buffer.height = this.canvasSize;
     const ctx = this.buffer.getContext('2d');
     if (!ctx) throw new Error('2d canvas context unavailable');
+    ctx.imageSmoothingEnabled = false;
     this.bufferCtx = ctx;
+
+    this.scratch = document.createElement('canvas');
+    this.scratch.width = this.buffer.width;
+    this.scratch.height = this.buffer.height;
+    const scratchCtx = this.scratch.getContext('2d');
+    if (!scratchCtx) throw new Error('2d canvas context unavailable');
+    scratchCtx.imageSmoothingEnabled = false;
+    this.scratchCtx = scratchCtx;
   }
 
+  /**
+   * Rebuilds the (origin, bottomGen) buffer, reusing as much of the
+   * previous buffer's pixels as possible instead of re-running primality
+   * tests on all ~1500 visible cells every time origin or bottomGen
+   * changes — which otherwise happens on essentially every single-cell
+   * pan/zoom step, and gets expensive fast as origin grows into hundreds
+   * of digits (bigint modPow cost grows with bit length). Two cases reuse
+   * the old buffer via drawImage instead of retesting:
+   *
+   * - A plain pan (bottomGen unchanged, origin ± 1): the whole buffer is
+   *   just the old one shifted by canvasSize/2 px — see panShift. Only
+   *   the newly-exposed margin strip needs fresh primality tests.
+   * - A single zoom-in step (bottomGen + 1, origin = old*2 or old*2+1):
+   *   the self-similar row layout means rows [0, rows-2] of the new
+   *   buffer are exactly a crop+2x-scale of the old buffer — see
+   *   zoomInShift. Only the new finest row needs fresh tests.
+   *
+   * Anything else (zoom-out, multi-step jumps, hash navigation, first
+   * paint) falls back to a full redraw. See PLAN.md for the derivation.
+   */
   private ensureBuffer(origin: bigint, bottomGen: number): void {
     if (this.cachedOrigin === origin && this.cachedBottomGen === bottomGen) return;
-    drawRows(this.bufferCtx, this.buffer.width, this.buffer.height, layoutRows(origin, this.rows));
+
+    if (this.cachedOrigin !== null && this.cachedBottomGen === bottomGen) {
+      if (origin === this.cachedOrigin + 1n) {
+        this.panShift(origin, 1);
+        this.cachedOrigin = origin;
+        return;
+      }
+      if (origin === this.cachedOrigin - 1n) {
+        this.panShift(origin, -1);
+        this.cachedOrigin = origin;
+        return;
+      }
+    } else if (this.cachedOrigin !== null && bottomGen === this.cachedBottomGen! + 1) {
+      if (origin === this.cachedOrigin * 2n) {
+        this.zoomInShift(origin, 0);
+        this.cachedOrigin = origin;
+        this.cachedBottomGen = bottomGen;
+        return;
+      }
+      if (origin === this.cachedOrigin * 2n + 1n) {
+        this.zoomInShift(origin, 1);
+        this.cachedOrigin = origin;
+        this.cachedBottomGen = bottomGen;
+        return;
+      }
+    }
+
+    drawRowsRange(this.bufferCtx, layoutRows(origin, this.rows), 0, this.buffer.width, this.buffer.height);
     this.cachedOrigin = origin;
     this.cachedBottomGen = bottomGen;
+  }
+
+  /**
+   * Pan by exactly one cell: shifts the buffer's existing pixels by
+   * canvasSize/2 px (every row's content moves by exactly that much when
+   * origin ± 1, regardless of the row's own generation — see PLAN.md) and
+   * redraws only the newly-exposed strip on the leading edge.
+   */
+  private panShift(newOrigin: bigint, direction: 1 | -1): void {
+    const width = this.buffer.width;
+    const height = this.buffer.height;
+    const shiftPx = this.canvasSize / 2;
+    const keepWidth = width - shiftPx;
+
+    this.scratchCtx.clearRect(0, 0, width, height);
+    if (direction > 0) {
+      // Content moves left; new strip appears on the right.
+      this.scratchCtx.drawImage(this.buffer, shiftPx, 0, keepWidth, height, 0, 0, keepWidth, height);
+      this.bufferCtx.drawImage(this.scratch, 0, 0, keepWidth, height, 0, 0, keepWidth, height);
+      drawRowsRange(this.bufferCtx, layoutRows(newOrigin, this.rows), keepWidth, width, height);
+    } else {
+      // Content moves right; new strip appears on the left.
+      this.scratchCtx.drawImage(this.buffer, 0, 0, keepWidth, height, 0, 0, keepWidth, height);
+      this.bufferCtx.drawImage(this.scratch, 0, 0, keepWidth, height, shiftPx, 0, keepWidth, height);
+      drawRowsRange(this.bufferCtx, layoutRows(newOrigin, this.rows), 0, shiftPx, height);
+    }
+  }
+
+  /**
+   * Zoom in by exactly one generation: the self-similar row layout (every
+   * row's pixel top equals its own height, by construction of the
+   * geometric-series layout in layoutRows) means the new buffer's rows
+   * [0, rows-2] are *exactly* a crop of the old buffer's rows [1, rows-1],
+   * scaled 2x — the same crop+scale relationship CameraRenderer.draw()
+   * already applies for sub-generation zoomFrac, just baked into the
+   * cache instead of the on-screen composite. `child` (which half the new
+   * origin descends into) picks the crop's x-offset. Only the new finest
+   * row (previously outside every cached generation) needs fresh
+   * primality tests.
+   */
+  private zoomInShift(newOrigin: bigint, child: 0 | 1): void {
+    const width = this.buffer.width;
+    const height = this.buffer.height;
+
+    const cropWidth = width / 2;
+    const cropOffsetX = child === 1 ? width / (2 * BOTTOM_ROW_CELLS) : 0;
+    const srcY = 1; // Below the 1px cap row.
+    const srcHeight = this.canvasSize / 2 - 1;
+    const destY = 2 * srcY;
+    const destHeight = 2 * srcHeight;
+
+    this.scratchCtx.clearRect(0, 0, width, height);
+    this.scratchCtx.drawImage(this.buffer, cropOffsetX, srcY, cropWidth, srcHeight, 0, 0, cropWidth, srcHeight);
+    this.bufferCtx.drawImage(this.scratch, 0, 0, cropWidth, srcHeight, 0, destY, width, destHeight);
+
+    // The cap row [0, 1) and the brand-new finest row [1, 2) both need
+    // fresh content — draw them together in one white-fill + cell pass.
+    const finestRow = layoutRows(newOrigin, this.rows)[0];
+    drawRowsRange(this.bufferCtx, [finestRow], 0, width, destY);
   }
 
   draw(

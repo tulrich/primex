@@ -26,6 +26,11 @@ export interface Camera {
 
 export const MIN_ORIGIN = 2n;
 export const MIN_BOTTOM_GEN = 1;
+// Backstop against pathological cost: beyond this depth, origin has ~1000
+// bits (~300 decimal digits) and every visible cell is a primality test at
+// that size. Mirrors MIN_BOTTOM_GEN's clamp/damping treatment at the other
+// end of the zoom range.
+export const MAX_BOTTOM_GEN = 1000;
 
 export function makeCamera(
   origin: bigint = MIN_ORIGIN,
@@ -116,6 +121,9 @@ export function dampZoomDelta(camera: Camera, dZoom: number): number {
   if (dZoom < 0 && camera.bottomGen <= MIN_BOTTOM_GEN) {
     return dZoom * camera.zoomFrac;
   }
+  if (dZoom > 0 && camera.bottomGen >= MAX_BOTTOM_GEN) {
+    return dZoom * (1 - camera.zoomFrac);
+  }
   return dZoom;
 }
 
@@ -139,6 +147,10 @@ export function zoomBy(camera: Camera, dZoom: number): Camera {
   whole = Math.max(-MAX_ZOOM_STEPS_PER_CALL, Math.min(MAX_ZOOM_STEPS_PER_CALL, whole));
 
   while (whole > 0) {
+    if (bottomGen >= MAX_BOTTOM_GEN) {
+      zoomFrac = 1;
+      break;
+    }
     const rightChild = frac >= 0.5;
     origin = origin * 2n + (rightChild ? 1n : 0n);
     frac = rightChild ? frac * 2 - 1 : frac * 2;

@@ -6,6 +6,7 @@ import {
   dampZoomDelta,
   MIN_ORIGIN,
   MIN_BOTTOM_GEN,
+  MAX_BOTTOM_GEN,
   type Camera,
 } from './camera';
 import {CameraRenderer, type Selection} from './view';
@@ -50,7 +51,13 @@ function parseHashOrigin(): bigint | null {
   if (!raw) return null;
   try {
     const origin = BigInt(raw);
-    return origin >= MIN_ORIGIN ? origin : null;
+    if (origin < MIN_ORIGIN) return null;
+    // A hand-edited URL could otherwise smuggle in an origin far past
+    // MAX_BOTTOM_GEN — cameraFromHash derives bottomGen straight from
+    // origin's own bit length, bypassing zoomBy's normal clamp, so this
+    // has to be checked here instead.
+    if (origin.toString(2).length - 1 > MAX_BOTTOM_GEN) return null;
+    return origin;
   } catch {
     return null; // Malformed value in a hand-edited or corrupted URL.
   }
@@ -447,8 +454,9 @@ function motionTick(t: number): void {
 
     if (Math.abs(zoomVelocity) > MIN_ZOOM_VELOCITY) {
       const pushingIntoMinZoom = camera.bottomGen <= MIN_BOTTOM_GEN && zoomVelocity < 0;
+      const pushingIntoMaxZoom = camera.bottomGen >= MAX_BOTTOM_GEN && zoomVelocity > 0;
       applyZoomRaw(zoomVelocity * dt, velocityAnchorFracX);
-      zoomVelocity = pushingIntoMinZoom ? 0 : zoomVelocity * ZOOM_VELOCITY_DECAY ** frames;
+      zoomVelocity = pushingIntoMinZoom || pushingIntoMaxZoom ? 0 : zoomVelocity * ZOOM_VELOCITY_DECAY ** frames;
       changed = true;
     } else if (zoomVelocity !== 0) {
       zoomVelocity = 0;

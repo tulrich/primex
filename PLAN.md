@@ -395,3 +395,81 @@ scrollWidth` was 517px (overflowing) and the canvas was pushed ~117px
 off-center; after the fix scrollWidth matches the viewport exactly and
 the canvas stays centered, with the origin readout simply wrapping to
 multiple lines instead.
+
+## Incremental buffer updates + a hard zoom-depth cap
+
+Report: navigation starts to jank once origin passes ~80 digits, though
+it stays usable to ~200. Root cause: `CameraRenderer.ensureBuffer()`
+fully re-tested all ~1,500 visible cells for primality every time
+`origin` or `bottomGen` changed — which happens on essentially every
+single-cell pan/zoom step during a drag — and bigint `modPow` cost grows
+with bit length, so each step got steadily more expensive as origin
+grew into hundreds of digits.
+
+**Incremental buffer updates** (`view.ts`). `ensureBuffer` now reuses
+the previous buffer's pixels via `drawImage` instead of retesting
+everything, for the two step shapes that actually happen during
+interactive pan/zoom:
+
+- **Pan by exactly one cell** (`origin` ± 1, `bottomGen` unchanged):
+  every row's content shifts by exactly `canvasSize/2` px, regardless of
+  which generation that row represents. This falls out of the buffer's
+  own geometry — each row spans the same `BOTTOM_ROW_CELLS * 2^(rows-1)`
+  pixel width no matter its cell count, so a `origin*2^j` shift in
+  world-space cell coordinates is always the same `2^(rows-1)` px shift
+  on screen. `panShift` blits the reusable `canvasSize - canvasSize/2`
+  px into place and redraws only the newly-exposed margin strip (the
+  buffer's built-in pan-margin cell, extended to every row).
+- **Zoom in by exactly one generation** (`bottomGen` + 1, `origin` =
+  old×2 or old×2+1): the layout has a neat identity — `top(j) ===
+  height(j)` for every row `j`, because the row heights form a
+  geometric series anchored by the 1px cap row. That makes the new
+  buffer's rows `[0, rows-2]` *exactly* a crop+2x-scale of the old
+  buffer's rows `[1, rows-1]`, with the crop's x-offset picked by which
+  child (`frac < 0.5` vs `>= 0.5`) the zoom descended into — the same
+  crop+scale relationship `draw()` already applies for sub-generation
+  `zoomFrac`, just baked into the cache. Only the new finest row (never
+  previously cached at any zoom level) needs real primality tests.
+  Zoom-out isn't optimized this way — the reverse direction needs *more*
+  horizontal data than the old buffer has, so it falls back to a full
+  redraw, same as before.
+- Anything else (multi-step jumps, hash navigation, first paint) also
+  falls back to a full redraw — the fallback is just the old behavior,
+  not a regression.
+
+Both incremental paths use a persistent scratch canvas rather than
+relying on same-canvas `drawImage` self-overlap semantics, and both the
+buffer and scratch contexts get `imageSmoothingEnabled = false` (new —
+previously only the on-screen `ctx` had it set, which didn't matter
+before since the buffer was always painted with flat `fillRect`s; now
+that it's also a `drawImage` *source* being scaled 2x, smoothing would
+blur the crisp cell edges).
+
+Verified two ways. Correctness: a Vite-dev-server harness importing
+`camera.ts`/`view.ts` directly (not the built bundle) drove a
+`CameraRenderer` through single pan-right, pan-left, zoom-into-left-
+child, zoom-into-right-child, a deep-origin (~90 bits) zoom-in, and a
+six-step chained pan/zoom/pan sequence, comparing `canvas.toDataURL()`
+against a *fresh* `CameraRenderer` jumping straight to the same end
+camera (always a full redraw, no incremental path) — pixel-identical in
+every case, plus a sanity check confirming two genuinely different
+cameras do NOT match (so the comparison isn't vacuous). Performance: at
+a ~200-digit (664-bit) origin, a full redraw averaged 347ms; a warm
+incremental pan step averaged 107ms (~3.3x) and a warm incremental
+zoom-in step averaged 180ms (~1.9x) — a real improvement, not a full
+elimination of cost at extreme depth, since the newly-exposed row still
+needs genuine primality tests at that bit length.
+
+**MAX_BOTTOM_GEN cap** (`camera.ts`). Added a hard backstop mirroring
+`MIN_BOTTOM_GEN`'s existing treatment at the other end: `MAX_BOTTOM_GEN
+= 1000` (origin capped at ~1000 bits / ~300 decimal digits), with
+`dampZoomDelta` decelerating zoom-in as `zoomFrac` approaches the cap
+the same way it already decelerates zoom-out at the root, and `zoomBy`
+clamping `zoomFrac` to 1 instead of rebasing past it. `main.ts`'s
+`motionTick` zeroes zoom velocity outright on hitting the cap (mirroring
+the existing root-boundary treatment) instead of letting it decay
+naturally into repeated no-op pushes. Also closed a related gap:
+`parseHashOrigin` now rejects a hand-edited URL whose origin exceeds the
+cap — `cameraFromHash` derives `bottomGen` straight from origin's bit
+length, bypassing `zoomBy`'s normal clamp entirely, so an untrusted URL
+could otherwise smuggle in an arbitrarily large origin.
