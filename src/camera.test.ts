@@ -10,6 +10,7 @@ import {
   dampZoomDelta,
   MIN_ORIGIN,
   MIN_BOTTOM_GEN,
+  MAX_BOTTOM_GEN,
   type Camera,
 } from './camera';
 
@@ -86,6 +87,12 @@ describe('zoomBy', () => {
     const c = zoomBy(makeCamera(MIN_ORIGIN, MIN_BOTTOM_GEN), -3);
     expect(c.bottomGen).toBe(MIN_BOTTOM_GEN);
     expect(c.zoomFrac).toBe(0);
+  });
+
+  it('clamps at MAX_BOTTOM_GEN and stops', () => {
+    const c = zoomBy(makeCamera(2n ** BigInt(MAX_BOTTOM_GEN), MAX_BOTTOM_GEN), 3);
+    expect(c.bottomGen).toBe(MAX_BOTTOM_GEN);
+    expect(c.zoomFrac).toBe(1);
   });
 
   it('round-trips: zoom in then immediately back out returns to the start', () => {
@@ -230,5 +237,15 @@ describe('dampZoomDelta', () => {
   it('damps zoom-out deltas at the min generation in proportion to zoomFrac', () => {
     const c = {...makeCamera(MIN_ORIGIN, MIN_BOTTOM_GEN), zoomFrac: 0.2};
     expect(dampZoomDelta(c, -0.5)).toBeCloseTo(-0.1, 9); // -0.5 * 0.2
+  });
+
+  it('passes zoom-out deltas through unchanged at the max generation', () => {
+    const c = {...makeCamera(2n, MAX_BOTTOM_GEN), zoomFrac: 0.4};
+    expect(dampZoomDelta(c, -0.3)).toBe(-0.3);
+  });
+
+  it('damps zoom-in deltas at the max generation in proportion to remaining room', () => {
+    const c = {...makeCamera(2n, MAX_BOTTOM_GEN), zoomFrac: 0.8};
+    expect(dampZoomDelta(c, 0.5)).toBeCloseTo(0.1, 9); // 0.5 * (1 - 0.8)
   });
 });
