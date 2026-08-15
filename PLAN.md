@@ -279,3 +279,39 @@ the motion loop, which pauses while a pointer is down), so a "drag then
 pause before lifting" release can still carry more residual velocity
 than expected. Not what was asked here; flagged for later if it turns
 out to matter in practice.
+
+## Boundary-snap bias: gated, not always-on
+
+Feedback after using the always-additive bias above: tone it down, don't
+apply it during medium/fast motion (only ramp in during the slow tail),
+and only apply it when the corner is already close (~1/8-1/16) to a grid
+vertex. The always-additive version was *weak* enough not to fight a
+fling, but it was still doing work at every speed and every offset —
+this pass makes it inert outside a narrow window instead of merely
+small.
+
+Two independent gates, both multiplicative on the existing ease:
+
+- **Velocity ramp.** `speed = hypot(panVelocity, zoomVelocity)` — valid
+  to combine directly since both are the same "distance unit per ms"
+  scale (dFrac=1 and dZoom=1 both correspond to canvasSize/2 = 256
+  canvas px of drag, see `ZOOM_DRAG_PIXELS`). A smoothstep from
+  `SNAP_VELOCITY_FULL` (0.00006, ~15 px/s) to `SNAP_VELOCITY_ZERO`
+  (0.0006, ~150 px/s) maps to a 1->0 multiplier: full bias strength at
+  or below a near-standstill speed, zero bias at or above a modest
+  walking-pace drag speed, smooth in between so it can't produce a
+  visible kink as a fling decays through the band.
+- **Proximity gate.** A hard gate (not ramped): `min(x, 1-x) < 1/8` on
+  *both* `frac` and `zoomFrac` before any bias applies at all. "The
+  image corner" is a single 2D point, so both coordinates have to
+  already be near their own boundary — a slow drag sitting mid-cell on
+  either axis gets no nudge, however slow it is.
+
+Verified: with the old thresholds (release velocity, then check bias
+contribution at t=80ms/mid-fling) the combined speed sits well above
+`SNAP_VELOCITY_ZERO`, so `velocityRamp` is exactly 0 during that entire
+window — the bias term contributes nothing until the fling has actually
+decayed into the slow tail, and even then only fires once the camera
+happens to coast to within 1/8 of a boundary on both axes. A settle
+smoke test (fast fling, then a tiny sub-boundary nudge) still converges
+cleanly to a whole-number origin with no jumps or console errors.

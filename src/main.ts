@@ -373,6 +373,24 @@ const MIN_OVERSCROLL_ZOOM = 0.001;
 const PAN_SNAP_STRENGTH = 0.05; // fraction of remaining distance closed per ~frame
 const ZOOM_SNAP_STRENGTH = 0.05;
 const SNAP_EPSILON = 0.001;
+// Combined pan+zoom speed (same units/scale, see panVelocity/zoomVelocity
+// above) below which the snap bias is at full strength, and above which
+// it's fully off — ramped smoothly in between so it never fights a fling.
+const SNAP_VELOCITY_FULL = 0.00006;
+const SNAP_VELOCITY_ZERO = 0.0006;
+// Snap bias only engages once the corner is already this close (as a
+// fraction of a cell/generation) to a grid vertex on BOTH axes — a slow
+// drag that's still mid-cell shouldn't get tugged toward a far boundary.
+const SNAP_PROXIMITY = 1 / 8;
+
+function smoothstep(edge0: number, edge1: number, x: number): number {
+  const t = Math.min(1, Math.max(0, (x - edge0) / (edge1 - edge0)));
+  return t * t * (3 - 2 * t);
+}
+
+function distToNearestBoundary(x: number): number {
+  return Math.min(x, 1 - x);
+}
 
 let lastMotionTimestamp = performance.now();
 
@@ -417,22 +435,32 @@ function motionTick(t: number): void {
     // (frac and zoomFrac both at 0, i.e. no partial cells anywhere in the
     // frame and no fractional scale) — separate from velocity-based
     // inertia, an exponential ease toward whichever of {0, 1} is nearer.
-    // Weak enough to be negligible mid-fling (momentum dominates); takes
-    // over as velocity dies down, which is the "likes to land on
-    // boundaries" feel without a hard forced snap. Anchored at a fixed
-    // center (0.5) for zoom since this isn't tied to any cursor position.
-    const panTarget = camera.frac < 0.5 ? 0 : 1;
-    const panRemaining = panTarget - camera.frac;
-    if (Math.abs(panRemaining) > SNAP_EPSILON) {
-      applyPanRaw(panRemaining * (1 - (1 - PAN_SNAP_STRENGTH) ** frames));
-      changed = true;
-    }
+    // Gated two ways so it only shows up as a landing feel, never as a
+    // mid-fling tug: ramped fully off during medium/fast motion (only
+    // engages in the slow tail once inertia has mostly died down), and
+    // hard-gated to require the corner already be close to a grid vertex
+    // on both axes. Anchored at a fixed center (0.5) for zoom since this
+    // isn't tied to any cursor position.
+    const speed = Math.hypot(panVelocity, zoomVelocity);
+    const velocityRamp = 1 - smoothstep(SNAP_VELOCITY_FULL, SNAP_VELOCITY_ZERO, speed);
+    const nearVertex =
+      distToNearestBoundary(camera.frac) < SNAP_PROXIMITY &&
+      distToNearestBoundary(camera.zoomFrac) < SNAP_PROXIMITY;
 
-    const zoomTarget = camera.zoomFrac < 0.5 ? 0 : 1;
-    const zoomRemaining = zoomTarget - camera.zoomFrac;
-    if (Math.abs(zoomRemaining) > SNAP_EPSILON) {
-      applyZoomRaw(zoomRemaining * (1 - (1 - ZOOM_SNAP_STRENGTH) ** frames), 0.5);
-      changed = true;
+    if (velocityRamp > 0 && nearVertex) {
+      const panTarget = camera.frac < 0.5 ? 0 : 1;
+      const panRemaining = panTarget - camera.frac;
+      if (Math.abs(panRemaining) > SNAP_EPSILON) {
+        applyPanRaw(panRemaining * velocityRamp * (1 - (1 - PAN_SNAP_STRENGTH) ** frames));
+        changed = true;
+      }
+
+      const zoomTarget = camera.zoomFrac < 0.5 ? 0 : 1;
+      const zoomRemaining = zoomTarget - camera.zoomFrac;
+      if (Math.abs(zoomRemaining) > SNAP_EPSILON) {
+        applyZoomRaw(zoomRemaining * velocityRamp * (1 - (1 - ZOOM_SNAP_STRENGTH) ** frames), 0.5);
+        changed = true;
+      }
     }
   }
 
