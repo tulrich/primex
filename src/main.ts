@@ -370,18 +370,23 @@ const MIN_PAN_VELOCITY = 0.00003;
 const MIN_ZOOM_VELOCITY = 0.00003;
 const MIN_OVERSCROLL_PX = 0.3;
 const MIN_OVERSCROLL_ZOOM = 0.001;
-const PAN_SNAP_STRENGTH = 0.05; // fraction of remaining distance closed per ~frame
-const ZOOM_SNAP_STRENGTH = 0.05;
 const SNAP_EPSILON = 0.001;
 // Combined pan+zoom speed (same units/scale, see panVelocity/zoomVelocity
 // above) below which the snap bias is at full strength, and above which
 // it's fully off — ramped smoothly in between so it never fights a fling.
 const SNAP_VELOCITY_FULL = 0.00006;
 const SNAP_VELOCITY_ZERO = 0.0006;
-// Snap bias only engages once the corner is already this close (as a
-// fraction of a cell/generation) to a grid vertex on BOTH axes — a slow
-// drag that's still mid-cell shouldn't get tugged toward a far boundary.
-const SNAP_PROXIMITY = 1 / 8;
+// Per-axis proximity-based ease strength (fraction of remaining distance
+// closed per ~frame): a plateau at full strength within SNAP_STRONG_
+// PROXIMITY of a boundary — strong enough to visibly converge over a
+// second or so even completely at rest — tapering linearly down to a
+// bare nudge by SNAP_WEAK_PROXIMITY, weak enough there that it never
+// starts a stationary point moving on its own; it only becomes
+// noticeable piggybacking on drift that's already happening.
+const SNAP_STRONG_PROXIMITY = 1 / 8;
+const SNAP_WEAK_PROXIMITY = 1 / 4;
+const SNAP_STRONG_STRENGTH = 0.08;
+const SNAP_WEAK_STRENGTH = 0.004;
 
 function smoothstep(edge0: number, edge1: number, x: number): number {
   const t = Math.min(1, Math.max(0, (x - edge0) / (edge1 - edge0)));
@@ -390,6 +395,24 @@ function smoothstep(edge0: number, edge1: number, x: number): number {
 
 function distToNearestBoundary(x: number): number {
   return Math.min(x, 1 - x);
+}
+
+function proximityStrength(dist: number): number {
+  if (dist <= SNAP_STRONG_PROXIMITY) return SNAP_STRONG_STRENGTH;
+  if (dist >= SNAP_WEAK_PROXIMITY) return 0;
+  const t = (dist - SNAP_STRONG_PROXIMITY) / (SNAP_WEAK_PROXIMITY - SNAP_STRONG_PROXIMITY);
+  return SNAP_STRONG_STRENGTH + (SNAP_WEAK_STRENGTH - SNAP_STRONG_STRENGTH) * t;
+}
+
+// Weak-zone bias (1/8-1/4) only assists motion that's already happening —
+// it's gated on that axis's velocity being nonzero, i.e. still mid-decay
+// — so a point sitting fully at rest just outside the strong zone never
+// starts drifting purely from the bias itself ("not enough to move on
+// its own"). Inside the strong zone it applies unconditionally, so a
+// point that comes to rest there still slowly converges on the vertex.
+function snapStrength(dist: number, axisVelocity: number): number {
+  if (dist <= SNAP_STRONG_PROXIMITY) return SNAP_STRONG_STRENGTH;
+  return axisVelocity !== 0 ? proximityStrength(dist) : 0;
 }
 
 let lastMotionTimestamp = performance.now();
@@ -435,30 +458,31 @@ function motionTick(t: number): void {
     // (frac and zoomFrac both at 0, i.e. no partial cells anywhere in the
     // frame and no fractional scale) — separate from velocity-based
     // inertia, an exponential ease toward whichever of {0, 1} is nearer.
-    // Gated two ways so it only shows up as a landing feel, never as a
-    // mid-fling tug: ramped fully off during medium/fast motion (only
-    // engages in the slow tail once inertia has mostly died down), and
-    // hard-gated to require the corner already be close to a grid vertex
-    // on both axes. Anchored at a fixed center (0.5) for zoom since this
-    // isn't tied to any cursor position.
+    // Ramped fully off during medium/fast motion so it never fights a
+    // fling, only showing up in the slow tail; strength beyond that is
+    // driven per-axis by proximity (see proximityStrength) rather than a
+    // hard on/off gate, and pan/zoom are evaluated independently — a
+    // pure horizontal pan should still get pulled toward a pan boundary
+    // even while zoomFrac sits wherever it was left, not just when both
+    // happen to be close at once. Anchored at a fixed center (0.5) for
+    // zoom since this isn't tied to any cursor position.
     const speed = Math.hypot(panVelocity, zoomVelocity);
     const velocityRamp = 1 - smoothstep(SNAP_VELOCITY_FULL, SNAP_VELOCITY_ZERO, speed);
-    const nearVertex =
-      distToNearestBoundary(camera.frac) < SNAP_PROXIMITY &&
-      distToNearestBoundary(camera.zoomFrac) < SNAP_PROXIMITY;
 
-    if (velocityRamp > 0 && nearVertex) {
+    if (velocityRamp > 0) {
       const panTarget = camera.frac < 0.5 ? 0 : 1;
       const panRemaining = panTarget - camera.frac;
-      if (Math.abs(panRemaining) > SNAP_EPSILON) {
-        applyPanRaw(panRemaining * velocityRamp * (1 - (1 - PAN_SNAP_STRENGTH) ** frames));
+      const panStrength = snapStrength(distToNearestBoundary(camera.frac), panVelocity);
+      if (panStrength > 0 && Math.abs(panRemaining) > SNAP_EPSILON) {
+        applyPanRaw(panRemaining * velocityRamp * (1 - (1 - panStrength) ** frames));
         changed = true;
       }
 
       const zoomTarget = camera.zoomFrac < 0.5 ? 0 : 1;
       const zoomRemaining = zoomTarget - camera.zoomFrac;
-      if (Math.abs(zoomRemaining) > SNAP_EPSILON) {
-        applyZoomRaw(zoomRemaining * velocityRamp * (1 - (1 - ZOOM_SNAP_STRENGTH) ** frames), 0.5);
+      const zoomStrength = snapStrength(distToNearestBoundary(camera.zoomFrac), zoomVelocity);
+      if (zoomStrength > 0 && Math.abs(zoomRemaining) > SNAP_EPSILON) {
+        applyZoomRaw(zoomRemaining * velocityRamp * (1 - (1 - zoomStrength) ** frames), 0.5);
         changed = true;
       }
     }

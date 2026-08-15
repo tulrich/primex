@@ -315,3 +315,39 @@ decayed into the slow tail, and even then only fires once the camera
 happens to coast to within 1/8 of a boundary on both axes. A settle
 smoke test (fast fling, then a tiny sub-boundary nudge) still converges
 cleanly to a whole-number origin with no jumps or console errors.
+
+## Boundary-snap bias: stronger inside 1/8, decoupled per axis
+
+Follow-up feedback: the joint (both-axes) gate above made the bias fire
+too rarely to be felt in practice — a pure horizontal pan almost never
+has zoomFrac sitting near its own boundary at the same time. Ask was to
+(a) make it noticeably stronger — actually converge — once resting
+within 1/8 of a vertex, and (b) extend a lighter touch out to 1/4, weak
+enough that it doesn't start a stationary point moving on its own.
+
+Two changes:
+
+- **Decoupled per axis.** Dropped the "both frac and zoomFrac close"
+  requirement; pan and zoom now each get their own proximity check
+  against their own boundary. A pure pan now reliably feels the bias
+  near a pan boundary regardless of where zoomFrac happens to sit.
+- **Two-zone proximity curve** (`proximityStrength`): a plateau at
+  `SNAP_STRONG_STRENGTH` (0.08/frame) within `SNAP_STRONG_PROXIMITY`
+  (1/8) of a boundary, linearly tapering to `SNAP_WEAK_STRENGTH`
+  (0.004/frame) by `SNAP_WEAK_PROXIMITY` (1/4), zero beyond.
+- **Weak-zone motion requires existing velocity** (`snapStrength`): the
+  1/8-1/4 band only applies while that axis's own velocity is still
+  nonzero (i.e. genuinely mid-decay from a fling) — never to a point
+  that's already come fully to rest there. The strong zone has no such
+  restriction, so a point that settles inside 1/8 keeps slowly
+  converging on the vertex even after velocity has fully zeroed out.
+
+Verified numerically (simulating the per-frame recurrence directly,
+matching the exact formula in motionTick): at rest with `frac = 0.06`
+(inside 1/8), converges to effectively 0 within ~2s (frac 0.055 -> 0.0045
+-> 0.0004 -> 0 over 120 frames). At rest with `frac = 0.2` (inside 1/4,
+outside 1/8) with zero velocity, `frac` is unchanged after 180 frames —
+confirms the weak zone never self-starts. With a small residual
+velocity at `frac = 0.2`, it nudges to ~0.151 over the ~5 frames before
+velocity decays below the cutoff and the nudging stops on its own —
+"a little bit of bias," not a full pull to the vertex.
