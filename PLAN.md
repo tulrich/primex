@@ -484,3 +484,25 @@ which keeps origin's own decimal digit count at or below 200 exactly
 `(2n**665n - 1n).toString().length === 201`). No other logic changed —
 `dampZoomDelta`, `zoomBy`'s clamp, and the hash-origin guard all key off
 the same constant.
+
+## Favicon: a small rendering of the app's own default view
+
+Request: "use a small version of the main plot with origin=2" for the
+browser tab icon. Computed a standalone 32x32 SVG (5 generations,
+`BOTTOM_ROW_CELLS=2` — no pan margin needed for a static image) using
+the same row-layout algorithm as `view.ts`'s `layoutRows`, then
+hardcoded it as a base64 `data:image/svg+xml` URI on a `<link
+rel="icon">` in `index.html` — no separate asset file, keeping the
+single-self-contained-index.html property, and no extra network
+request.
+
+The bottom half renders solid black: 2 and 3 (the first two integers at
+origin=2) are both prime, so row 0's two cells fill the whole lower
+half — an accurate, if visually bold, reflection of the app's actual
+default view, not an artifact. Verified: computed primality for the 62
+integers spanning the 5 visible generations (2..63) independently of
+`primes.ts` (small trial-division, values this small don't need
+Miller-Rabin) to build the rect list, then rendered the resulting SVG
+in a real browser at several sizes (16/32/64px) and confirmed the built
+`dist/index.html`'s `<link rel="icon">` resolves with the correct
+`data:image/svg+xml` href and type.
