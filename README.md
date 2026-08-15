@@ -11,7 +11,7 @@ The current view is propagated to the URL in case you want to share a view. No s
 
 Written in TypeScript and compiled down to a single HTML file.
 
-(https://github.com/tulrich/primex)[GitHub link]
+[GitHub link](https://github.com/tulrich/primex)
 
 ## Scheme
 
