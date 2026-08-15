@@ -243,3 +243,39 @@ exactly — it's reconstructed from origin's own bit length, a reasonable
 fresh starting point for a shared link even though the live camera
 deliberately avoids deriving bottomGen that way during panning (see the
 note on that in camera.ts).
+
+## Bigger canvas, boundary-snap physics
+
+**Image size.** The first padding cut (1.5rem -> 0.75rem) barely moved
+anything: `#canvas-wrap`'s `min(80vmin, 640px)` was the actual binding
+constraint on any normal screen, not body padding (12px is negligible
+next to the vmin/viewport gap). This time raised the real lever —
+`min(94vmin, 760px)` — and trimmed padding further (0.75rem -> 0.4rem)
+on top. Verified: 390px-wide viewport now renders a 367px canvas
+(previously would've been ~300px, still 80vmin-capped); 900px viewport
+now hits the 760px ceiling.
+
+**Boundary-snap bias.** "frac and zoomFrac both at 0" is exactly "image
+boundaries on block boundaries" — at that state every row's cells align
+with no partial cells anywhere (zoomFrac=0 additionally means no
+fractional scale, pixel-perfect). Added a gentle exponential ease toward
+whichever of {0, 1} is nearer on each axis, live in motionTick alongside
+velocity-driven inertia — deliberately *additive*, not a replacement or
+a hard snap: at strong-fling speeds it's negligible (verified: 80ms
+after a fast release, frac had already moved from 0.395 to 0.762,
+clearly momentum-dominated, bias contributing ~nothing perceptible), and
+only comes to dominate once velocity has mostly decayed. Verified the
+full trajectory over 6s: smooth monotonic convergence toward 0 on both
+axes even when residual post-release velocity initially carries the
+camera further from the target first (frac peaked at 0.415 before
+easing down to 0.024 by t=6s) — the bias doesn't fight momentum, it
+just wins eventually. Zoom's bias anchors at a fixed center (0.5),
+consistent with the earlier axis-decoupling fix, since this isn't tied
+to any cursor position.
+
+Noted but out of scope for this pass: holding the pointer stationary
+before releasing doesn't currently decay velocity (decay only runs in
+the motion loop, which pauses while a pointer is down), so a "drag then
+pause before lifting" release can still carry more residual velocity
+than expected. Not what was asked here; flagged for later if it turns
+out to matter in practice.
