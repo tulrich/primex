@@ -1,6 +1,7 @@
 # primex
 Visually explore the set of prime numbers via their binary representations mapped to images
- (https://tulrich.github.io/primex/)[Try it]
+
+[Try it](https://tulrich.github.io/primex/)
 
 The black squares are primes. Drag the image to explore different portions of the integer set. Touch a prime to highlight it and see its numeric value below.
 
