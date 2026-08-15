@@ -351,3 +351,20 @@ confirms the weak zone never self-starts. With a small residual
 velocity at `frac = 0.2`, it nudges to ~0.151 over the ~5 frames before
 velocity decays below the cutoff and the nudging stops on its own —
 "a little bit of bias," not a full pull to the vertex.
+
+## Boundary-snap bias: wider zones (1/4 strong, 1/2 weak)
+
+Feedback after using the above: "very smooth, let's try bigger zones" —
+widened `SNAP_STRONG_PROXIMITY` from 1/8 to 1/4 and `SNAP_WEAK_PROXIMITY`
+from 1/4 to 1/2. Since `distToNearestBoundary` maxes out at exactly 0.5
+(at `frac`/`zoomFrac` = 0.5, the farthest possible point from either
+boundary and also where the target flips), the weak zone at 1/2 now
+covers essentially the *entire* range — every frac/zoomFrac value gets
+at least a faint pull toward its nearer boundary, vanishing only in the
+limit at the exact midpoint. `snapStrength`'s at-rest gating is
+unchanged and still does its job at the new scale: verified at rest
+with `frac = 0.2` (now inside the strong 1/4 zone) it converges cleanly
+to 0 over ~180 frames; at rest with `frac = 0.4` (inside the new 1/2
+weak zone, outside 1/4) it stays exactly put with zero velocity, and
+only nudges (0.4 -> ~0.30) while residual velocity is still nonzero,
+same as before just rescaled to the wider bands.

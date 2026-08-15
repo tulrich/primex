@@ -383,8 +383,8 @@ const SNAP_VELOCITY_ZERO = 0.0006;
 // bare nudge by SNAP_WEAK_PROXIMITY, weak enough there that it never
 // starts a stationary point moving on its own; it only becomes
 // noticeable piggybacking on drift that's already happening.
-const SNAP_STRONG_PROXIMITY = 1 / 8;
-const SNAP_WEAK_PROXIMITY = 1 / 4;
+const SNAP_STRONG_PROXIMITY = 1 / 4;
+const SNAP_WEAK_PROXIMITY = 1 / 2;
 const SNAP_STRONG_STRENGTH = 0.08;
 const SNAP_WEAK_STRENGTH = 0.004;
 
