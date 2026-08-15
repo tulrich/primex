@@ -48,6 +48,8 @@ h1 .tagline {
   font-variant-numeric: tabular-nums;
   font-size: 0.95rem;
   text-align: center;
+  overflow-wrap: anywhere;
+  max-width: 90vw;
 }
 
 #readout .range {

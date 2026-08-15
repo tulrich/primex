@@ -376,3 +376,22 @@ tried-so-far pairs (1/8-1/4, 1/4-1/2) at `SNAP_STRONG_PROXIMITY = 1/6`,
 `SNAP_WEAK_PROXIMITY = 1/3`. Everything else (the at-rest gating in
 `snapStrength`, the velocity ramp, per-axis independence) is unchanged
 — this is purely a constants tweak.
+
+## Wrap the origin readout for very long primes
+
+Bug report: navigating to a ~75-digit origin stretched the page wider
+than the viewport and visibly decentered the whole layout (canvas
+included). Root cause: `#selected` already had `overflow-wrap: anywhere`
++ `max-width: 90vw` (added earlier for exactly this reason — see the
+"line break after large numbers" note), but `#readout`, which shows the
+current origin, never got the same treatment — a long digit run has no
+natural break point, so without `overflow-wrap` the browser renders it
+as one unbreakable line and the flex-centered body grows to fit it.
+
+Fix: mirrored `#selected`'s `overflow-wrap: anywhere; max-width: 90vw;`
+onto `#readout`. Verified with Playwright: loading `#origin=<75-digit
+number>` at a 400px viewport, before the fix `document.documentElement.
+scrollWidth` was 517px (overflowing) and the canvas was pushed ~117px
+off-center; after the fix scrollWidth matches the viewport exactly and
+the canvas stays centered, with the origin readout simply wrapping to
+multiple lines instead.
