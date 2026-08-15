@@ -370,6 +370,9 @@ const MIN_PAN_VELOCITY = 0.00003;
 const MIN_ZOOM_VELOCITY = 0.00003;
 const MIN_OVERSCROLL_PX = 0.3;
 const MIN_OVERSCROLL_ZOOM = 0.001;
+const PAN_SNAP_STRENGTH = 0.05; // fraction of remaining distance closed per ~frame
+const ZOOM_SNAP_STRENGTH = 0.05;
+const SNAP_EPSILON = 0.001;
 
 let lastMotionTimestamp = performance.now();
 
@@ -408,6 +411,28 @@ function motionTick(t: number): void {
       changed = true;
     } else if (zoomVelocity !== 0) {
       zoomVelocity = 0;
+    }
+
+    // Gentle bias toward landing on a clean cell/generation boundary
+    // (frac and zoomFrac both at 0, i.e. no partial cells anywhere in the
+    // frame and no fractional scale) — separate from velocity-based
+    // inertia, an exponential ease toward whichever of {0, 1} is nearer.
+    // Weak enough to be negligible mid-fling (momentum dominates); takes
+    // over as velocity dies down, which is the "likes to land on
+    // boundaries" feel without a hard forced snap. Anchored at a fixed
+    // center (0.5) for zoom since this isn't tied to any cursor position.
+    const panTarget = camera.frac < 0.5 ? 0 : 1;
+    const panRemaining = panTarget - camera.frac;
+    if (Math.abs(panRemaining) > SNAP_EPSILON) {
+      applyPanRaw(panRemaining * (1 - (1 - PAN_SNAP_STRENGTH) ** frames));
+      changed = true;
+    }
+
+    const zoomTarget = camera.zoomFrac < 0.5 ? 0 : 1;
+    const zoomRemaining = zoomTarget - camera.zoomFrac;
+    if (Math.abs(zoomRemaining) > SNAP_EPSILON) {
+      applyZoomRaw(zoomRemaining * (1 - (1 - ZOOM_SNAP_STRENGTH) ** frames), 0.5);
+      changed = true;
     }
   }
 
