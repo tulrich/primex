@@ -462,7 +462,8 @@ needs genuine primality tests at that bit length.
 
 **MAX_BOTTOM_GEN cap** (`camera.ts`). Added a hard backstop mirroring
 `MIN_BOTTOM_GEN`'s existing treatment at the other end: `MAX_BOTTOM_GEN
-= 1000` (origin capped at ~1000 bits / ~300 decimal digits), with
+= 663` (origin's bit-length tops out at 664, which keeps its decimal
+digit count at or below 200 — 665 bits would allow 201), with
 `dampZoomDelta` decelerating zoom-in as `zoomFrac` approaches the cap
 the same way it already decelerates zoom-out at the root, and `zoomBy`
 clamping `zoomFrac` to 1 instead of rebasing past it. `main.ts`'s
@@ -473,3 +474,13 @@ naturally into repeated no-op pushes. Also closed a related gap:
 cap — `cameraFromHash` derives `bottomGen` straight from origin's bit
 length, bypassing `zoomBy`'s normal clamp entirely, so an untrusted URL
 could otherwise smuggle in an arbitrarily large origin.
+
+## Tighten the zoom-depth cap to 200 digits
+
+Follow-up: "let's cap it at 200 digits" — lowered `MAX_BOTTOM_GEN` from
+the earlier ~300-digit-equivalent value (1000) to 663 (bit-length 664),
+which keeps origin's own decimal digit count at or below 200 exactly
+(verified: `(2n**664n - 1n).toString().length === 200`,
+`(2n**665n - 1n).toString().length === 201`). No other logic changed —
+`dampZoomDelta`, `zoomBy`'s clamp, and the hash-origin guard all key off
+the same constant.

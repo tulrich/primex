@@ -26,11 +26,11 @@ export interface Camera {
 
 export const MIN_ORIGIN = 2n;
 export const MIN_BOTTOM_GEN = 1;
-// Backstop against pathological cost: beyond this depth, origin has ~1000
-// bits (~300 decimal digits) and every visible cell is a primality test at
-// that size. Mirrors MIN_BOTTOM_GEN's clamp/damping treatment at the other
-// end of the zoom range.
-export const MAX_BOTTOM_GEN = 1000;
+// Backstop against pathological cost: keeps origin's own digit count at or
+// below 200 (bottomGen 663 -> bit-length 664 -> up to 200 decimal digits;
+// 664 would allow 201). Mirrors MIN_BOTTOM_GEN's clamp/damping treatment at
+// the other end of the zoom range.
+export const MAX_BOTTOM_GEN = 663;
 
 export function makeCamera(
   origin: bigint = MIN_ORIGIN,
