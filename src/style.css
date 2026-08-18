@@ -69,6 +69,27 @@ h1 .tagline {
   font-weight: 600;
 }
 
+#facts {
+  max-width: 560px;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  font-size: 0.85rem;
+  text-align: center;
+  color: #333333;
+}
+
+.fact-label {
+  font-weight: 600;
+  /* Echoes the amber used to highlight this fact's related number(s) on
+     the plot itself, so the two visually connect. */
+  color: #b45309;
+}
+
+.fact a {
+  color: #2563eb;
+}
+
 #controls {
   display: flex;
   gap: 0.5rem;

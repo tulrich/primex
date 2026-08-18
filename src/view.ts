@@ -207,6 +207,28 @@ export function hitTestAt(
   return null;
 }
 
+/**
+ * Locates a specific integer among the currently visible rows, if it's
+ * there — the value-space counterpart of hitTestAt's pixel-space lookup.
+ * Used to find where a "related" number (e.g. a twin-prime partner) should
+ * be highlighted, without assuming it shares the selected prime's own
+ * generation (it usually does, but not if it happens to cross a
+ * power-of-2 bit-length boundary). Doesn't check primality — the caller
+ * already knows that.
+ */
+export function findVisibleSelection(rows: number, camera: Camera, n: bigint): Selection | null {
+  const rowList = layoutRows(camera.origin, rows);
+  for (let idx = 0; idx < rowList.length; idx++) {
+    const row = rowList[idx];
+    const c = n - row.start;
+    if (c >= 0n && c < BigInt(row.cellCount)) {
+      const j = rows - 1 - idx;
+      return {n, gen: camera.bottomGen + j};
+    }
+  }
+  return null;
+}
+
 export class CameraRenderer {
   readonly rows: number;
   readonly canvasSize: number;
@@ -362,6 +384,7 @@ export class CameraRenderer {
     overscrollXPixels = 0,
     overscrollZoomOut = 0,
     selected: Selection | null = null,
+    related: readonly Selection[] = [],
   ): void {
     this.ensureBuffer(camera.origin, camera.bottomGen);
 
@@ -387,6 +410,18 @@ export class CameraRenderer {
     ctx.strokeStyle = '#000000';
     ctx.lineWidth = 1;
     ctx.strokeRect(0.5, 0.5, size - 1, size - 1);
+
+    // Related highlights (e.g. a twin-prime partner) draw first, in a
+    // lighter amber, so the primary blue selection always reads as the
+    // more prominent one even where they'd overlap.
+    for (const rel of related) {
+      const rect = selectionScreenRect(this.rows, this.canvasSize, camera, rel, overscrollXPixels, overscrollZoomOut);
+      if (rect) {
+        ctx.strokeStyle = '#f59e0b';
+        ctx.lineWidth = 2;
+        ctx.strokeRect(rect.x, rect.y, rect.size, rect.size);
+      }
+    }
 
     if (selected) {
       const rect = selectionScreenRect(

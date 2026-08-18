@@ -1,5 +1,5 @@
 import {describe, expect, it} from 'vitest';
-import {hitTestAt, selectionScreenRect, canvasSizeForRows, type Selection} from './view';
+import {hitTestAt, selectionScreenRect, findVisibleSelection, canvasSizeForRows, type Selection} from './view';
 import {makeCamera, panBy, zoomBy, type Camera} from './camera';
 
 const ROWS = 9;
@@ -84,5 +84,33 @@ describe('hitTestAt against known primality', () => {
   it('a tap outside the canvas bounds to the right misses cleanly', () => {
     const camera = makeCamera();
     expect(hitTestAt(ROWS, SIZE, camera, SIZE * 10, SIZE * 0.75, 0, 0)).toBeNull();
+  });
+});
+
+describe('findVisibleSelection', () => {
+  it('finds a number in the bottom (coarsest) row and reports its gen', () => {
+    const camera = makeCamera(); // origin=2, bottomGen=1; bottom row is (2, 3)
+    expect(findVisibleSelection(ROWS, camera, 3n)).toEqual({n: 3n, gen: 1});
+  });
+
+  it('finds a number in a finer row, at the correct absolute generation', () => {
+    const camera = makeCamera(37n, 6);
+    // Row j=2 (two generations finer than bottomGen) starts at 37*2^2=148.
+    const n = 37n * 2n ** 2n + 5n;
+    expect(findVisibleSelection(ROWS, camera, n)).toEqual({n, gen: 8});
+  });
+
+  it('returns null for a number outside every visible row', () => {
+    const camera = makeCamera(37n, 6);
+    expect(findVisibleSelection(ROWS, camera, 999999n)).toBeNull();
+  });
+
+  it('agrees with hitTestAt: a found selection round-trips to the same on-screen cell', () => {
+    const camera = {...makeCamera(37n, 6), frac: 0.3, zoomFrac: 0.2};
+    const n = 37n * 2n ** 3n + 10n; // some number in a finer row
+    const found = findVisibleSelection(ROWS, camera, n);
+    expect(found).not.toBeNull();
+    const rect = selectionScreenRect(ROWS, SIZE, camera, found!, 0, 0);
+    expect(rect).not.toBeNull();
   });
 });

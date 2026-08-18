@@ -9,8 +9,9 @@ import {
   MAX_BOTTOM_GEN,
   type Camera,
 } from './camera';
-import {CameraRenderer, type Selection} from './view';
+import {CameraRenderer, findVisibleSelection, type Selection} from './view';
 import {isPrime} from './primes';
+import {computeFacts, type PrimeFact} from './primeFacts';
 
 const app = document.querySelector<HTMLDivElement>('#app');
 if (!app) throw new Error('missing #app root');
@@ -20,6 +21,7 @@ app.innerHTML = `
   <div id="canvas-wrap"><canvas id="view"></canvas></div>
   <div id="readout"></div>
   <div id="selected"></div>
+  <div id="facts"></div>
   <div id="controls">
     <button id="reset">Reset</button>
   </div>
@@ -30,6 +32,7 @@ app.innerHTML = `
 const canvas = document.querySelector<HTMLCanvasElement>('#view')!;
 const readout = document.querySelector<HTMLDivElement>('#readout')!;
 const selectedEl = document.querySelector<HTMLDivElement>('#selected')!;
+const factsEl = document.querySelector<HTMLDivElement>('#facts')!;
 const resetButton = document.querySelector<HTMLButtonElement>('#reset')!;
 const ctx = canvas.getContext('2d');
 if (!ctx) throw new Error('2d canvas context unavailable');
@@ -99,7 +102,17 @@ function scheduleHashSync(): void {
 }
 
 let camera: Camera = cameraFromHash();
-let selected: Selection | null = selectionFromHash();
+let selected: Selection | null = null;
+let currentFacts: readonly PrimeFact[] = [];
+
+/** Sets the selected prime and recomputes its education facts alongside
+ * it, so the two can never drift out of sync. */
+function setSelected(next: Selection | null): void {
+  selected = next;
+  currentFacts = next ? computeFacts(next.n) : [];
+}
+
+setSelected(selectionFromHash());
 
 // --- Overscroll: purely a render-time visual, layered on top of an
 // unchanged, hard-clamped camera. Grows from whatever dampPanDelta/
@@ -127,7 +140,17 @@ function digits(n: bigint): string {
 }
 
 function draw(): void {
-  renderer.draw(ctx!, camera, overscrollXPixels, overscrollZoomOut, selected);
+  // Related numbers (e.g. a twin-prime partner) are looked up fresh every
+  // frame, not cached on selection: which ones are on-screen (if any)
+  // changes continuously as the camera moves.
+  const related: Selection[] = [];
+  for (const fact of currentFacts) {
+    for (const n of fact.related) {
+      const found = findVisibleSelection(renderer.rows, camera, n);
+      if (found) related.push(found);
+    }
+  }
+  renderer.draw(ctx!, camera, overscrollXPixels, overscrollZoomOut, selected, related);
 
   readout.innerHTML =
     `origin ${camera.origin} (${digits(camera.origin)})<br>` +
@@ -136,6 +159,16 @@ function draw(): void {
   selectedEl.innerHTML = selected
     ? `selected prime:<br><span class="value">${selected.n}</span> (${digits(selected.n)})`
     : '';
+
+  factsEl.innerHTML = currentFacts
+    .map(
+      (fact) =>
+        `<div class="fact">` +
+        `<span class="fact-label">${fact.label}</span> — ${fact.description} ` +
+        `<a href="${fact.wikipediaUrl}" target="_blank" rel="noopener">Learn more</a>` +
+        `</div>`,
+    )
+    .join('');
 
   scheduleHashSync();
 }
@@ -323,7 +356,7 @@ function releasePointer(event: PointerEvent): void {
     const rect = canvas.getBoundingClientRect();
     const canvasX = (event.clientX - rect.left) * (renderer.canvasSize / rect.width);
     const canvasY = (event.clientY - rect.top) * (renderer.canvasSize / rect.height);
-    selected = renderer.hitTest(camera, canvasX, canvasY, overscrollXPixels, overscrollZoomOut);
+    setSelected(renderer.hitTest(camera, canvasX, canvasY, overscrollXPixels, overscrollZoomOut));
     draw();
   }
   tapPointerId = null;
@@ -362,7 +395,7 @@ resetButton.addEventListener('click', () => {
   overscrollXPixels = 0;
   overscrollZoomOut = 0;
   camera = makeCamera();
-  selected = null;
+  setSelected(null);
   draw();
 });
 
