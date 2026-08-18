@@ -24,6 +24,7 @@ app.innerHTML = `
     <button id="reset">Reset</button>
   </div>
   <p id="help">Drag to explore.</p>
+  <p id="footer"><a href="https://github.com/tulrich/primex" target="_blank" rel="noopener">View on GitHub</a></p>
 `;
 
 const canvas = document.querySelector<HTMLCanvasElement>('#view')!;
