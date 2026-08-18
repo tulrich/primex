@@ -506,3 +506,72 @@ Miller-Rabin) to build the rect list, then rendered the resulting SVG
 in a real browser at several sizes (16/32/64px) and confirmed the built
 `dist/index.html`'s `<link rel="icon">` resolves with the correct
 `data:image/svg+xml` href and type.
+
+## Prime education: fact panel + related-prime highlighting
+
+Request: link to the GitHub repo at the bottom of the app, and — since
+the user doesn't know much about primes — surface what kind of prime a
+selection is (twin, palindrome, etc.), highlight related primes, and
+link out to Wikipedia to actually learn something.
+
+**GitHub link**: a plain `<p id="footer">` below the help text, styled
+to match it.
+
+**Fact detection** (`src/primeFacts.ts`, pure, no DOM): `computeFacts(n)`
+classifies an already-known prime into whichever of these apply, each
+with a one-line explanation and a Wikipedia link:
+
+- Exactly one of **the only even prime** (n=2) / **Pythagorean prime**
+  (n mod 4 = 1, expressible as a sum of two squares) / **Blum prime**
+  (n mod 4 = 3, used in Blum Blum Shub / Rabin) — every prime falls into
+  one of these three, so the panel is never empty.
+- **Twin / cousin / sexy prime** — part of a pair exactly 2 / 4 / 6
+  apart. Each checks both neighbors and reports whichever are
+  themselves prime (could be one side or both).
+- **Sophie Germain prime** (2n+1 is prime) / **safe prime** ((n-1)/2 is
+  prime) — the two ends of the same relationship, both real
+  cryptographic building blocks (Diffie-Hellman groups).
+- **Palindromic prime** / **emirp** — digit-string properties (reads the
+  same backwards, or reverses to a *different* prime). Gated to 2+
+  digits so single-digit primes don't trivially claim both.
+- **Mersenne prime** (2^k − 1) / **Fermat prime** (2^(2^k) + 1) — checked
+  via bit-pattern tests on `n+1`/`n-1` (`x & (x-1) === 0` for "is a power
+  of two"), so they're cheap regardless of `n`'s size, even though a hit
+  is vanishingly rare at a random deep zoom.
+
+All the neighbor/derived-number checks reuse `primes.ts`'s existing
+`isPrime` — at most a handful of extra Miller-Rabin runs, once per tap
+(not per frame), so this doesn't reintroduce the per-frame cost the
+render-buffer optimization just removed.
+
+**On-screen highlighting**: each fact can name specific "related"
+integers (a twin partner, 2n+1, a digit-reversal, ...). `view.ts` gained
+`findVisibleSelection(rows, camera, n)` — the value-space counterpart of
+`hitTestAt`'s pixel-space lookup, searching the same visible rows for a
+specific integer instead of a screen point — and `CameraRenderer.draw()`
+takes an optional `related: Selection[]` array, stroked in amber
+(`#f59e0b`) *before* the primary blue selection so blue always wins on
+overlap. `main.ts` recomputes which related numbers are actually
+on-screen fresh every `draw()` call (not cached on selection), since
+that changes continuously as the camera moves — cheap, since it's just
+a row-range search, no primality tests.
+
+A `setSelected()` wrapper keeps `selected` and `currentFacts` from
+drifting out of sync (all three assignment sites — tap, reset, hash
+restore — go through it instead of writing `selected` directly).
+
+Verified: unit tests in `primeFacts.test.ts` hand-check several primes
+against manually-verified number theory (5 is a rich case — Pythagorean,
+twin on both sides, sexy, Sophie Germain, safe, *and* Fermat all at
+once; 131 is a palindrome; 13's reversal 31 makes it an emirp), plus a
+100-digit prime to confirm nothing chokes at depth. New `view.test.ts`
+cases confirm `findVisibleSelection` finds a number in the right row at
+the right absolute generation, returns null when a number isn't in any
+visible row, and round-trips through `selectionScreenRect` the same way
+`hitTestAt` does. In-browser: loading `#origin=2&selected=5` renders
+all six expected fact labels with working Wikipedia links, and the
+screenshot shows the blue selection box on 5 plus amber boxes on its
+twin (7) and safe-prime (2) partners — including the shared amber edge
+between the two bottom cells (2 and 3), confirming both sides of the
+twin-prime pair are highlighted even where a cell's own edge coincides
+with the canvas boundary and gets clipped.
