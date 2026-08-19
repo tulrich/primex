@@ -105,11 +105,24 @@ let camera: Camera = cameraFromHash();
 let selected: Selection | null = null;
 let currentFacts: readonly PrimeFact[] = [];
 
-/** Sets the selected prime and recomputes its education facts alongside
- * it, so the two can never drift out of sync. */
+/** Sets the selected prime, recomputes its education facts, and rebuilds
+ * the facts panel — all together, so they can never drift out of sync.
+ * Deliberately NOT done from draw(): draw() runs every animation frame
+ * during a pan/zoom, and rebuilding this HTML every frame would reset any
+ * <details> the user had tapped open mid-drag. */
 function setSelected(next: Selection | null): void {
   selected = next;
   currentFacts = next ? computeFacts(next.n) : [];
+
+  factsEl.innerHTML = currentFacts
+    .map(
+      (fact) =>
+        `<details class="fact">` +
+        `<summary><span class="fact-label">${fact.label}</span> — ${fact.short}</summary>` +
+        `<p>${fact.description} <a href="${fact.wikipediaUrl}" target="_blank" rel="noopener">Learn more</a></p>` +
+        `</details>`,
+    )
+    .join('');
 }
 
 setSelected(selectionFromHash());
@@ -159,16 +172,6 @@ function draw(): void {
   selectedEl.innerHTML = selected
     ? `selected prime:<br><span class="value">${selected.n}</span> (${digits(selected.n)})`
     : '';
-
-  factsEl.innerHTML = currentFacts
-    .map(
-      (fact) =>
-        `<div class="fact">` +
-        `<span class="fact-label">${fact.label}</span> — ${fact.description} ` +
-        `<a href="${fact.wikipediaUrl}" target="_blank" rel="noopener">Learn more</a>` +
-        `</div>`,
-    )
-    .join('');
 
   scheduleHashSync();
 }

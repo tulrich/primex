@@ -7,6 +7,9 @@ import {isPrime} from './primes';
 export interface PrimeFact {
   readonly id: string;
   readonly label: string;
+  /** One clause, shown inline in the always-visible list. */
+  readonly short: string;
+  /** The fuller explanation, shown only when this fact is expanded. */
   readonly description: string;
   readonly wikipediaUrl: string;
   /** Other integers this fact is about — highlighted on screen if visible. */
@@ -35,6 +38,7 @@ export function computeFacts(n: bigint): PrimeFact[] {
     facts.push({
       id: 'only-even-prime',
       label: 'The only even prime',
+      short: 'every other even number is divisible by 2',
       description:
         'Every other even number is divisible by 2, so 2 is the sole exception — the "oddest" prime, in a sense.',
       wikipediaUrl: 'https://en.wikipedia.org/wiki/Prime_number',
@@ -44,6 +48,7 @@ export function computeFacts(n: bigint): PrimeFact[] {
     facts.push({
       id: 'pythagorean-prime',
       label: 'Pythagorean prime',
+      short: 'a sum of two squares',
       description:
         'Primes that are 1 more than a multiple of 4 can always be written as a sum of two squares (Fermat’s theorem on sums of two squares) — e.g. 13 = 2² + 3².',
       wikipediaUrl: 'https://en.wikipedia.org/wiki/Pythagorean_prime',
@@ -52,7 +57,8 @@ export function computeFacts(n: bigint): PrimeFact[] {
   } else {
     facts.push({
       id: 'blum-prime',
-      label: 'Blum prime (≡ 3 mod 4)',
+      label: 'Blum prime',
+      short: '≡ 3 (mod 4)',
       description:
         'Primes that are 3 more than a multiple of 4 can never be written as a sum of two squares. Pairs of them are used to build the Blum Blum Shub random-number generator and the Rabin cryptosystem.',
       wikipediaUrl: 'https://en.wikipedia.org/wiki/Blum_prime',
@@ -61,16 +67,24 @@ export function computeFacts(n: bigint): PrimeFact[] {
   }
 
   // --- Twin / cousin / sexy primes: pairs a fixed small distance apart.
-  const pairFact = (id: string, label: string, gap: bigint, description: string, wikipediaUrl: string): void => {
+  const pairFact = (
+    id: string,
+    label: string,
+    gap: bigint,
+    short: string,
+    description: string,
+    wikipediaUrl: string,
+  ): void => {
     const related: bigint[] = [];
     if (n - gap >= 2n && isPrime(n - gap)) related.push(n - gap);
     if (isPrime(n + gap)) related.push(n + gap);
-    if (related.length > 0) facts.push({id, label, description, wikipediaUrl, related});
+    if (related.length > 0) facts.push({id, label, short, description, wikipediaUrl, related});
   };
   pairFact(
     'twin-prime',
     'Twin prime',
     2n,
+    'part of a pair exactly 2 apart',
     'Part of a pair of primes exactly 2 apart. Whether infinitely many twin primes exist is one of the oldest open problems in number theory.',
     'https://en.wikipedia.org/wiki/Twin_prime',
   );
@@ -78,6 +92,7 @@ export function computeFacts(n: bigint): PrimeFact[] {
     'cousin-prime',
     'Cousin prime',
     4n,
+    'part of a pair exactly 4 apart',
     'Part of a pair of primes exactly 4 apart.',
     'https://en.wikipedia.org/wiki/Cousin_prime',
   );
@@ -85,6 +100,7 @@ export function computeFacts(n: bigint): PrimeFact[] {
     'sexy-prime',
     'Sexy prime',
     6n,
+    'part of a pair exactly 6 apart',
     'Part of a pair of primes exactly 6 apart (from the Latin "sex" for six).',
     'https://en.wikipedia.org/wiki/Sexy_prime',
   );
@@ -95,6 +111,7 @@ export function computeFacts(n: bigint): PrimeFact[] {
     facts.push({
       id: 'sophie-germain-prime',
       label: 'Sophie Germain prime',
+      short: '2n + 1 is also prime',
       description:
         '2n + 1 is also prime. Named for the mathematician who used primes like this in early work toward Fermat’s Last Theorem; they’re also used to build cryptographic groups.',
       wikipediaUrl: 'https://en.wikipedia.org/wiki/Safe_and_Sophie_Germain_primes',
@@ -107,6 +124,7 @@ export function computeFacts(n: bigint): PrimeFact[] {
       facts.push({
         id: 'safe-prime',
         label: 'Safe prime',
+        short: '(n − 1) / 2 is also prime',
         description:
           '(n − 1) / 2 is also prime. Safe primes are the standard choice for the prime modulus in Diffie–Hellman key exchange.',
         wikipediaUrl: 'https://en.wikipedia.org/wiki/Safe_and_Sophie_Germain_primes',
@@ -120,6 +138,7 @@ export function computeFacts(n: bigint): PrimeFact[] {
     facts.push({
       id: 'palindromic-prime',
       label: 'Palindromic prime',
+      short: 'reads the same backwards',
       description: 'Reads the same forwards and backwards in decimal.',
       wikipediaUrl: 'https://en.wikipedia.org/wiki/Palindromic_prime',
       related: [],
@@ -129,8 +148,9 @@ export function computeFacts(n: bigint): PrimeFact[] {
     if (reversed !== n && isPrime(reversed)) {
       facts.push({
         id: 'emirp',
-        label: 'Emirp ("prime" spelled backwards)',
-        description: 'Reversing its digits gives a different prime.',
+        label: 'Emirp',
+        short: 'reverses to a different prime',
+        description: '"Prime" spelled backwards — reversing its digits gives a different prime.',
         wikipediaUrl: 'https://en.wikipedia.org/wiki/Emirp',
         related: [reversed],
       });
@@ -142,6 +162,7 @@ export function computeFacts(n: bigint): PrimeFact[] {
     facts.push({
       id: 'mersenne-prime',
       label: 'Mersenne prime',
+      short: 'of the form 2ᵏ − 1',
       description:
         'Of the form 2ᵏ − 1. These are rare, and finding new ones (via distributed projects like GIMPS) is how the current largest known primes get discovered.',
       wikipediaUrl: 'https://en.wikipedia.org/wiki/Mersenne_prime',
@@ -154,6 +175,7 @@ export function computeFacts(n: bigint): PrimeFact[] {
       facts.push({
         id: 'fermat-prime',
         label: 'Fermat prime',
+        short: 'of the form 2^(2ᵏ) + 1',
         description:
           'Of the form 2^(2ᵏ) + 1. Only five are known to exist (3, 5, 17, 257, 65537) — whether there are any more is still unknown.',
         wikipediaUrl: 'https://en.wikipedia.org/wiki/Fermat_number',

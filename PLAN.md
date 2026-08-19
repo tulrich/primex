@@ -575,3 +575,32 @@ twin (7) and safe-prime (2) partners — including the shared amber edge
 between the two bottom cells (2 and 3), confirming both sides of the
 twin-prime pair are highlighted even where a cell's own edge coincides
 with the canvas boundary and gets clipped.
+
+## Fact panel: short inline clauses, detail on tap
+
+Follow-up: "shorten the descriptions and provide the detail in popups."
+`PrimeFact` gained a `short` field (one clause, e.g. "part of a pair
+exactly 2 apart") alongside the existing longer `description`. The
+panel now renders each fact as a native `<details>`/`<summary>`: the
+label + short clause is always visible in the collapsed summary line,
+and tapping it expands to the full description + Wikipedia link — no
+custom positioning/JS needed for a floating popup, and it's keyboard-
+and screen-reader-accessible for free.
+
+One real bug caught before it shipped: the facts panel's HTML used to
+get rebuilt unconditionally on every `draw()` call, which runs on every
+animation frame during a live pan/zoom. Rebuilding via `innerHTML`
+destroys and recreates the DOM nodes, which would silently reset any
+`<details open>` state the instant the camera moved even slightly —
+tap a fact open, nudge the view, and it'd snap back shut. Fixed by
+moving the facts-panel HTML generation into `setSelected()` (only runs
+when the selection itself changes) instead of `draw()` (runs every
+frame); `draw()` still recomputes on-screen related-highlight positions
+every frame as before, since that's genuinely camera-dependent, but no
+longer touches the panel's DOM.
+
+Verified in-browser: collapsed summaries show only the short clause;
+clicking one opens it and reveals the full text; critically, dragging
+the view afterward (exercising several `draw()` calls via the live
+pointermove handler) leaves the opened fact still open, confirming the
+regression above doesn't reoccur.
