@@ -71,12 +71,28 @@ h1 .tagline {
 
 #facts {
   max-width: 560px;
+  width: 100%;
   display: flex;
   flex-direction: column;
-  gap: 0.35rem;
+  gap: 0.3rem;
   font-size: 0.85rem;
-  text-align: center;
+  text-align: left;
   color: #333333;
+  box-sizing: border-box;
+}
+
+.fact {
+  border: 1px solid #dddddd;
+  border-radius: 4px;
+  padding: 0.3rem 0.6rem;
+}
+
+.fact summary {
+  cursor: pointer;
+}
+
+.fact summary::marker {
+  color: #999999;
 }
 
 .fact-label {
@@ -84,6 +100,11 @@ h1 .tagline {
   /* Echoes the amber used to highlight this fact's related number(s) on
      the plot itself, so the two visually connect. */
   color: #b45309;
+}
+
+.fact p {
+  margin: 0.4rem 0 0;
+  color: #444444;
 }
 
 .fact a {
