@@ -152,19 +152,27 @@ export interface RelatedRingHighlight extends RingHighlight {
   readonly selection: Selection;
 }
 
-/** Fixed screen-space gap between concentric rings, in canvas px. */
-const RING_GAP_PX = 3;
+/** Per-ring gap as a fraction of the cell's own on-screen size, not a
+ * fixed pixel count — a fixed px gap looks fine on a large cell but eats
+ * a hugely disproportionate share of a small one (e.g. a coarser row
+ * rendered small on screen), making the nesting look uneven ("insetting
+ * more") depending on how big that particular cell happens to render.
+ * Scaling with the cell's own size keeps the proportions consistent
+ * regardless of zoom level or which row a highlight lands in. */
+const RING_GAP_FRACTION = 0.05;
 
 /**
  * Insets `rect` for a ring at `depth` (0 = flush with `rect` itself, 1 =
- * one gap further in, ...), offset by `baseInset` first — used to leave
- * room for the selected cell's own outer blue "this is selected" ring,
- * which related-highlight cells don't have. Returns null once nesting
- * has eaten the whole cell (a small on-screen cell only fits so many
- * rings), so the caller can just skip drawing it.
+ * one gap further in, ...), offset by `baseInsetSteps` first — used to
+ * leave room for the selected cell's own outer blue "this is selected"
+ * ring, which related-highlight cells don't have. Both are counted in
+ * gap-sized steps, not raw pixels, so they scale together. Returns null
+ * once nesting has eaten the whole cell (a small on-screen cell only
+ * fits so many rings), so the caller can just skip drawing it.
  */
-export function ringRect(rect: ScreenRect, depth: number, baseInset: number): ScreenRect | null {
-  const inset = baseInset + depth * RING_GAP_PX;
+export function ringRect(rect: ScreenRect, depth: number, baseInsetSteps: number): ScreenRect | null {
+  const gapPx = rect.size * RING_GAP_FRACTION;
+  const inset = (baseInsetSteps + depth) * gapPx;
   const size = rect.size - inset * 2;
   if (size <= 0) return null;
   return {x: rect.x + inset, y: rect.y + inset, size};
@@ -480,13 +488,14 @@ export class CameraRenderer {
       );
       if (rect) {
         ctx.strokeStyle = '#2563eb';
-        ctx.lineWidth = 3;
+        ctx.lineWidth = 2;
         ctx.strokeRect(rect.x, rect.y, rect.size, rect.size);
 
         // The selected prime's own category rings nest just inside the
-        // blue selection border (baseInset leaves it room), one per fact.
+        // blue selection border (baseInsetSteps=1 leaves it room), one
+        // per fact.
         for (const ring of selectedRings) {
-          const inset = ringRect(rect, ring.depth, RING_GAP_PX);
+          const inset = ringRect(rect, ring.depth, 1);
           if (!inset) continue;
           ctx.strokeStyle = ring.color;
           ctx.lineWidth = 2;
