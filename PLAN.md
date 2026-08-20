@@ -717,3 +717,34 @@ default rich selection (5, cell ~130px) and a much smaller cell (37,
 ~16px, landing several generations finer) both show cleanly
 proportioned nested rings rather than the small one looking
 disproportionately "eaten into."
+
+## Ring gap: clamp the proportional fraction, don't scale unbounded
+
+Follow-up: "somehow the borders are worse" after the pure-percentage
+gap fix. Root cause: the previous fix (5% of cell size) solved the
+small-cell problem but overcorrected at the other end — a 256px cell
+(e.g. the selected prime landing in the bottom, coarsest row) got a
+~13px gap per ring, which read as chunky/spaced-out squares instead of
+a tight nested bullseye. A pure fraction has no ceiling, so it was
+never going to look right at both a 16px cell and a 256px cell with
+one constant.
+
+Fixed by clamping the fraction-derived gap to `[RING_GAP_MIN_PX=1,
+RING_GAP_MAX_PX=3]` and lowering `RING_GAP_FRACTION` to 0.02 so the
+*unclamped* middle range (roughly 50-150px cells, the common case)
+still scales smoothly between those bounds. Small cells floor at 1px
+instead of vanishing to sub-pixel; large cells cap at 3px instead of
+ballooning — both ends now look like the same tight ring style the
+original fixed-3px version had for a "normal" cell, which is what the
+percentage-only version accidentally lost at the large end while
+fixing the small end.
+
+Verified: confirmed the actual pixel gap via `getImageData` on a
+256px selected cell before this fix (~13px between ring edges,
+matching the "worse" complaint) and rewrote `ringRect`'s unit tests for
+the clamped formula (mid-range proportionality, min-clamp on a tiny
+cell, max-clamp on a huge one). In-browser: re-screenshotted both the
+original small-cell case and a deliberately large one (origin=5,
+selected=5, landing in the coarsest/biggest row) — both now show a
+tight, consistent nested-ring style instead of the large one looking
+spaced-out.

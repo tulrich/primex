@@ -123,8 +123,18 @@ describe('findVisibleSelection', () => {
 });
 
 describe('ringRect', () => {
-  const cell = {x: 100, y: 100, size: 64};
-  const GAP_FRACTION = 0.05; // must match view.ts's RING_GAP_FRACTION
+  // A pure percentage gap turned out to overcorrect at both ends (see
+  // PLAN.md): a fixed px gap ate a disproportionate share of a small
+  // cell, but scaling without a ceiling made a large cell's rings look
+  // chunky/spaced-out instead of a tight nested bullseye. The gap is a
+  // fraction of the cell's own size, clamped to [MIN_PX, MAX_PX] -- these
+  // must match view.ts's RING_GAP_FRACTION/MIN_PX/MAX_PX.
+  const GAP_FRACTION = 0.02;
+  const MIN_PX = 1;
+  const MAX_PX = 3;
+  const gapFor = (size: number) => Math.min(MAX_PX, Math.max(MIN_PX, size * GAP_FRACTION));
+
+  const cell = {x: 100, y: 100, size: 64}; // 64 * 0.02 = 1.28, within [1, 3]: unclamped
 
   it('depth 0 with no base inset sits flush with the cell (a related highlight\'s first ring)', () => {
     expect(ringRect(cell, 0, 0)).toEqual(cell);
@@ -140,40 +150,43 @@ describe('ringRect', () => {
     expect(r2.size).toBeLessThan(r1.size);
     // Centered: inset grows equally on every side.
     expect(r1.x - r0.x).toBeCloseTo((r0.size - r1.size) / 2, 9);
-    // The gap itself is exactly 5% of the ORIGINAL cell size, not of the
-    // shrinking inner rect -- this is the fix for borders looking like
-    // they "inset more" on a cell that renders small on screen: at a
-    // fixed pixel gap, the same 3px eats a much bigger share of a small
-    // cell than a large one; scaled by the cell's own size, the visual
-    // proportion stays constant regardless of how big the cell renders.
-    expect(r1.x - r0.x).toBeCloseTo(cell.size * GAP_FRACTION, 9);
+    expect(r1.x - r0.x).toBeCloseTo(gapFor(cell.size), 9);
   });
 
-  it('the same depth insets proportionally less on a smaller cell, not by the same fixed amount', () => {
-    const big = {x: 0, y: 0, size: 200};
-    const small = {x: 0, y: 0, size: 20};
-    const bigInset = ringRect(big, 1, 0)!.x - big.x;
+  it('a mid-size cell scales the gap proportionally (within the unclamped band)', () => {
+    const small = {x: 0, y: 0, size: 60}; // 60*0.02=1.2, unclamped
+    const big = {x: 0, y: 0, size: 120}; // 120*0.02=2.4, unclamped
     const smallInset = ringRect(small, 1, 0)!.x - small.x;
-    expect(bigInset).toBeCloseTo(big.size * GAP_FRACTION, 9);
-    expect(smallInset).toBeCloseTo(small.size * GAP_FRACTION, 9);
-    // Same fraction, so a 10x bigger cell gets a 10x bigger inset in
-    // absolute px -- proportionally identical, not visually "deeper."
-    expect(bigInset / big.size).toBeCloseTo(smallInset / small.size, 9);
+    const bigInset = ringRect(big, 1, 0)!.x - big.x;
+    expect(smallInset).toBeCloseTo(gapFor(small.size), 9);
+    expect(bigInset).toBeCloseTo(gapFor(big.size), 9);
+    expect(bigInset).toBeGreaterThan(smallInset);
   });
 
-  it('baseInsetSteps shifts every depth in uniformly, in the same proportional units (room for the selected cell\'s own blue ring)', () => {
+  it('clamps to a max gap on a large cell, instead of scaling the gap up unboundedly', () => {
+    const huge = {x: 0, y: 0, size: 500}; // 500*0.02=10, way past MAX_PX
+    const inset = ringRect(huge, 1, 0)!.x - huge.x;
+    expect(inset).toBeCloseTo(MAX_PX, 9);
+  });
+
+  it('clamps to a min gap on a tiny cell, instead of vanishing to sub-pixel', () => {
+    const tiny = {x: 0, y: 0, size: 10}; // 10*0.02=0.2, way below MIN_PX
+    const inset = ringRect(tiny, 1, 0)!.x - tiny.x;
+    expect(inset).toBeCloseTo(MIN_PX, 9);
+  });
+
+  it('baseInsetSteps shifts every depth in uniformly, by the same gap (room for the selected cell\'s own blue ring)', () => {
     const withoutBase = ringRect(cell, 2, 0)!;
     const withBase = ringRect(cell, 2, 1)!;
-    const gapPx = cell.size * GAP_FRACTION;
+    const gapPx = gapFor(cell.size);
     expect(withBase.x).toBeCloseTo(withoutBase.x + gapPx, 9);
     expect(withBase.size).toBeCloseTo(withoutBase.size - 2 * gapPx, 9);
   });
 
-  it('returns null once nesting has eaten the whole cell, at any cell size (proportional, so it takes the same step count)', () => {
-    for (const size of [4, 64, 500]) {
-      const c = {x: 0, y: 0, size};
-      expect(ringRect(c, 9, 0)).not.toBeNull(); // still fits: 9 steps * 5% * 2 = 90%
-      expect(ringRect(c, 10, 0)).toBeNull(); // 10 steps * 5% * 2 = 100%, exactly consumes it
-    }
+  it('returns null once nesting has eaten the whole cell', () => {
+    // This cell's gap is unclamped (1.28px), so it takes depth*1.28*2 >=
+    // 64 -- exactly depth 25 -- before the rect's size hits zero.
+    expect(ringRect(cell, 24, 0)).not.toBeNull();
+    expect(ringRect(cell, 25, 0)).toBeNull();
   });
 });
