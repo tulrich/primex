@@ -682,3 +682,38 @@ panel; a `getImageData` scan of 11's cell (both 5's sexy-prime partner
 and its Sophie Germain partner 2×5+1) confirmed both the yellow and
 magenta ring colors are actually present in its pixels, not just one
 overwriting the other.
+
+## Proportional ring gaps, uniform 2px borders
+
+Follow-up: "the scaling of the box borders is weird; the borders inset
+more as the square recedes in the distance" — `RING_GAP_PX` was a fixed
+3 screen-px gap per ring depth, computed AFTER `selectionScreenRect`
+already applied the zoom transform. A fixed px gap eats a tiny share of
+a large on-screen cell but a hugely disproportionate share of a small
+one (a coarser row rendered small, or any cell viewed at low zoom) —
+that's the "insets more as it recedes" effect.
+
+Fixed by making the gap a fraction of the cell's OWN on-screen size
+(`RING_GAP_FRACTION = 0.05`, i.e. 5% of that cell's rendered size per
+ring) rather than an absolute pixel count — `ringRect`'s `baseInset`
+parameter is now counted in the same proportional "steps," not raw px.
+A useful side effect: since the gap now scales with the cell, how many
+rings fit before `ringRect` returns null is now independent of the
+cell's absolute size (any cell fits up to depth 9 before nesting
+consumes it entirely, `9 * 5% * 2 = 90%` vs `10 * 5% * 2 = 100%`) —
+previously a fixed px gap meant tiny cells ran out of room after far
+fewer rings than large ones.
+
+Also set all highlight borders (the primary blue selection ring, which
+was 3px, and the category rings, already 2px) uniformly to 2px, per
+request.
+
+Verified: `ringRect` unit tests rewritten for the proportional formula,
+including one confirming the SAME depth produces a proportionally
+*equal* fraction-of-cell-size inset on a 200px cell and a 20px cell
+(not the same absolute px), and that null-return now triggers at the
+same step count regardless of absolute cell size. In-browser: the
+default rich selection (5, cell ~130px) and a much smaller cell (37,
+~16px, landing several generations finer) both show cleanly
+proportioned nested rings rather than the small one looking
+disproportionately "eaten into."

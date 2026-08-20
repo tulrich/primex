@@ -124,12 +124,13 @@ describe('findVisibleSelection', () => {
 
 describe('ringRect', () => {
   const cell = {x: 100, y: 100, size: 64};
+  const GAP_FRACTION = 0.05; // must match view.ts's RING_GAP_FRACTION
 
   it('depth 0 with no base inset sits flush with the cell (a related highlight\'s first ring)', () => {
     expect(ringRect(cell, 0, 0)).toEqual(cell);
   });
 
-  it('each deeper depth nests further in by a fixed gap, staying centered', () => {
+  it('each deeper depth nests further in by a gap proportional to the cell\'s own size, staying centered', () => {
     const r0 = ringRect(cell, 0, 0)!;
     const r1 = ringRect(cell, 1, 0)!;
     const r2 = ringRect(cell, 2, 0)!;
@@ -139,18 +140,40 @@ describe('ringRect', () => {
     expect(r2.size).toBeLessThan(r1.size);
     // Centered: inset grows equally on every side.
     expect(r1.x - r0.x).toBeCloseTo((r0.size - r1.size) / 2, 9);
+    // The gap itself is exactly 5% of the ORIGINAL cell size, not of the
+    // shrinking inner rect -- this is the fix for borders looking like
+    // they "inset more" on a cell that renders small on screen: at a
+    // fixed pixel gap, the same 3px eats a much bigger share of a small
+    // cell than a large one; scaled by the cell's own size, the visual
+    // proportion stays constant regardless of how big the cell renders.
+    expect(r1.x - r0.x).toBeCloseTo(cell.size * GAP_FRACTION, 9);
   });
 
-  it('baseInset shifts every depth in uniformly (room for the selected cell\'s own blue ring)', () => {
+  it('the same depth insets proportionally less on a smaller cell, not by the same fixed amount', () => {
+    const big = {x: 0, y: 0, size: 200};
+    const small = {x: 0, y: 0, size: 20};
+    const bigInset = ringRect(big, 1, 0)!.x - big.x;
+    const smallInset = ringRect(small, 1, 0)!.x - small.x;
+    expect(bigInset).toBeCloseTo(big.size * GAP_FRACTION, 9);
+    expect(smallInset).toBeCloseTo(small.size * GAP_FRACTION, 9);
+    // Same fraction, so a 10x bigger cell gets a 10x bigger inset in
+    // absolute px -- proportionally identical, not visually "deeper."
+    expect(bigInset / big.size).toBeCloseTo(smallInset / small.size, 9);
+  });
+
+  it('baseInsetSteps shifts every depth in uniformly, in the same proportional units (room for the selected cell\'s own blue ring)', () => {
     const withoutBase = ringRect(cell, 2, 0)!;
-    const withBase = ringRect(cell, 2, 5)!;
-    expect(withBase.x).toBe(withoutBase.x + 5);
-    expect(withBase.size).toBe(withoutBase.size - 10);
+    const withBase = ringRect(cell, 2, 1)!;
+    const gapPx = cell.size * GAP_FRACTION;
+    expect(withBase.x).toBeCloseTo(withoutBase.x + gapPx, 9);
+    expect(withBase.size).toBeCloseTo(withoutBase.size - 2 * gapPx, 9);
   });
 
-  it('returns null once nesting has eaten the whole cell (a tiny on-screen cell)', () => {
-    const tiny = {x: 0, y: 0, size: 4};
-    expect(ringRect(tiny, 0, 0)).not.toBeNull(); // still fits
-    expect(ringRect(tiny, 5, 0)).toBeNull(); // 5 gaps of 3px each blows past a 4px cell
+  it('returns null once nesting has eaten the whole cell, at any cell size (proportional, so it takes the same step count)', () => {
+    for (const size of [4, 64, 500]) {
+      const c = {x: 0, y: 0, size};
+      expect(ringRect(c, 9, 0)).not.toBeNull(); // still fits: 9 steps * 5% * 2 = 90%
+      expect(ringRect(c, 10, 0)).toBeNull(); // 10 steps * 5% * 2 = 100%, exactly consumes it
+    }
   });
 });
