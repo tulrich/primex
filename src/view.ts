@@ -152,14 +152,19 @@ export interface RelatedRingHighlight extends RingHighlight {
   readonly selection: Selection;
 }
 
-/** Per-ring gap as a fraction of the cell's own on-screen size, not a
- * fixed pixel count — a fixed px gap looks fine on a large cell but eats
- * a hugely disproportionate share of a small one (e.g. a coarser row
- * rendered small on screen), making the nesting look uneven ("insetting
- * more") depending on how big that particular cell happens to render.
- * Scaling with the cell's own size keeps the proportions consistent
- * regardless of zoom level or which row a highlight lands in. */
-const RING_GAP_FRACTION = 0.05;
+/**
+ * Per-ring gap: a fraction of the cell's own on-screen size, clamped to a
+ * sensible pixel range. Pure percentage scaling turns out to overcorrect
+ * at both ends — a fixed px gap ate a disproportionate share of a small
+ * cell, but scaling *without* a ceiling makes a large cell's gaps look
+ * chunky/spaced-out instead of a tight nested bullseye (a 256px cell at
+ * 5% is a ~13px gap per ring). Clamping keeps it visually tight and
+ * consistent across the whole size range instead of degrading at
+ * whichever extreme the fraction wasn't tuned for.
+ */
+const RING_GAP_FRACTION = 0.02;
+const RING_GAP_MIN_PX = 1;
+const RING_GAP_MAX_PX = 3;
 
 /**
  * Insets `rect` for a ring at `depth` (0 = flush with `rect` itself, 1 =
@@ -171,7 +176,7 @@ const RING_GAP_FRACTION = 0.05;
  * fits so many rings), so the caller can just skip drawing it.
  */
 export function ringRect(rect: ScreenRect, depth: number, baseInsetSteps: number): ScreenRect | null {
-  const gapPx = rect.size * RING_GAP_FRACTION;
+  const gapPx = Math.min(RING_GAP_MAX_PX, Math.max(RING_GAP_MIN_PX, rect.size * RING_GAP_FRACTION));
   const inset = (baseInsetSteps + depth) * gapPx;
   const size = rect.size - inset * 2;
   if (size <= 0) return null;
