@@ -9,7 +9,7 @@ import {
   MAX_BOTTOM_GEN,
   type Camera,
 } from './camera';
-import {CameraRenderer, findVisibleSelection, type Selection} from './view';
+import {CameraRenderer, findVisibleSelection, type Selection, type RelatedRingHighlight} from './view';
 import {isPrime} from './primes';
 import {computeFacts, type PrimeFact} from './primeFacts';
 
@@ -117,8 +117,12 @@ function setSelected(next: Selection | null): void {
   factsEl.innerHTML = currentFacts
     .map(
       (fact) =>
+        // The swatch carries the category color; the label text itself
+        // stays in ordinary ink so it's always readable regardless of how
+        // that particular hue contrasts against the page background.
         `<details class="fact">` +
-        `<summary><span class="fact-label">${fact.label}</span> — ${fact.short}</summary>` +
+        `<summary><span class="fact-swatch" style="background:${fact.color}"></span>` +
+        `<span class="fact-label">${fact.label}</span> — ${fact.short}</summary>` +
         `<p>${fact.description} <a href="${fact.wikipediaUrl}" target="_blank" rel="noopener">Learn more</a></p>` +
         `</details>`,
     )
@@ -155,15 +159,20 @@ function digits(n: bigint): string {
 function draw(): void {
   // Related numbers (e.g. a twin-prime partner) are looked up fresh every
   // frame, not cached on selection: which ones are on-screen (if any)
-  // changes continuously as the camera moves.
-  const related: Selection[] = [];
+  // changes continuously as the camera moves. The selected cell's own
+  // rings are just currentFacts' own color/depth directly; a related
+  // cell can pick up rings from more than one fact (e.g. a number that's
+  // both a twin AND a cousin partner), which is exactly the concentric-
+  // multiple-borders effect this is for.
+  const selectedRings = currentFacts.map((fact) => ({color: fact.color, depth: fact.depth}));
+  const relatedRings: RelatedRingHighlight[] = [];
   for (const fact of currentFacts) {
     for (const n of fact.related) {
       const found = findVisibleSelection(renderer.rows, camera, n);
-      if (found) related.push(found);
+      if (found) relatedRings.push({selection: found, color: fact.color, depth: fact.depth});
     }
   }
-  renderer.draw(ctx!, camera, overscrollXPixels, overscrollZoomOut, selected, related);
+  renderer.draw(ctx!, camera, overscrollXPixels, overscrollZoomOut, selected, selectedRings, relatedRings);
 
   readout.innerHTML =
     `origin ${camera.origin} (${digits(camera.origin)})<br>` +

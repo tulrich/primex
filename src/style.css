@@ -95,11 +95,19 @@ h1 .tagline {
   color: #999999;
 }
 
+.fact-swatch {
+  display: inline-block;
+  width: 0.7em;
+  height: 0.7em;
+  border-radius: 2px;
+  margin-right: 0.3em;
+  /* A hairline ring so pale swatches (e.g. the yellow/aqua slots) still
+     read as a distinct shape against the white panel background. */
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.15);
+}
+
 .fact-label {
   font-weight: 600;
-  /* Echoes the amber used to highlight this fact's related number(s) on
-     the plot itself, so the two visually connect. */
-  color: #b45309;
 }
 
 .fact p {

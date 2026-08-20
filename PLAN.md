@@ -604,3 +604,81 @@ clicking one opens it and reveals the full text; critically, dragging
 the view afterward (exercising several `draw()` calls via the live
 pointermove handler) leaves the opened fact still open, confirming the
 regression above doesn't reoccur.
+
+## Concentric colored rings, one per category
+
+Request: different colors per kind of prime, and concentric borders so a
+cell belonging to multiple categories shows all of them at once.
+
+**Palette.** This is squarely a "categorical colors" decision, so used
+the dataviz skill's validated reference palette (`references/palette.md`)
+and its validator script rather than hand-picking hues. Two things
+simplified what would otherwise be a 12-category CVD problem the skill
+itself says isn't solvable (its own 8-slot reference only clears
+all-pairs CVD for its first 3 slots):
+
+- Three separate mutually-exclusive groups never actually need to be
+  told apart from each other, because a given prime can only ever show
+  one member of each group: {only-even, Pythagorean, Blum} (every prime
+  is exactly one), and {palindrome, emirp} (a palindrome's reversal
+  equals itself, so it can never also independently qualify as an
+  emirp, which requires a *different* reversed prime). Each group
+  shares one ring color/depth instead of needing distinct ones.
+- The genuinely co-occurring set is 8: {twin, cousin, sexy, Sophie
+  Germain, safe, Mersenne, Fermat} plus the shared mod-4/even ring —
+  reference blue is reserved for the primary "you selected this"
+  marker (reusing it for a category would make that ring
+  indistinguishable from a category ring when they'd sit adjacent), so
+  used the reference's other 7 hues (orange/aqua/yellow/magenta/green/
+  red/plus one new) plus one new teal (`#00a0a0`, hand-picked to clear
+  the chroma floor — several teal candidates around L~0.5 kept failing
+  it) for the digit-pattern group.
+  `node scripts/validate_palette.js "<8 hex>" --mode light --surface
+  "#ffffff" --pairs adjacent` — ALL CHECKS PASS (only WARNs, no FAILs).
+
+**Why adjacent-pairs, not all-pairs, is the right bar here**: each
+category gets a *fixed* ring depth (0 = outermost "fact" ring, working
+inward), not a depth equal to its index among however many facts a
+specific prime happens to have. A prime missing an in-between category
+leaves a visible gap between its other rings rather than compacting
+them together — so two ring colors only ever render truly edge-to-edge
+if they're both present AND their depths are numerically consecutive,
+which is exactly what "adjacent pairs" validates. (All-pairs would be
+the right bar for something like a scatter plot where any two marks can
+end up next to each other by chance; concentric rings with reserved,
+never-compacted depths don't have that failure mode.)
+
+**Rendering** (`view.ts`): `ringRect(rect, depth, baseInset)` insets a
+cell's rect by `baseInset + depth * RING_GAP_PX`, returning null once
+nesting has eaten the whole cell (tiny on-screen cells just stop
+showing the deeper rings — expected degradation, not a bug).
+`CameraRenderer.draw()` takes `selectedRings`/`relatedRings` — the
+selected prime's own rings nest just inside its blue border
+(`baseInset = RING_GAP_PX`), related highlights start flush with their
+own cell edge (`baseInset = 0`, no blue ring of their own). A number
+related through multiple facts (e.g. 11, which is both 5's sexy-prime
+partner AND 2×5+1 Sophie Germain partner) naturally gets one ring per
+fact at their respective depths — that's the whole feature, falling out
+of `relatedRings` just being a flat list of `{selection, color, depth}`
+with no dedup.
+
+**Accessibility**: the fact panel's colored swatch is a small square
+next to the label, not the label text's own color — several of the
+validated hues (yellow, aqua, magenta) are sub-3:1 contrast against
+white and unreadable as body text, so text stays in ordinary ink per
+the "text wears text tokens, never the series color" rule and the
+swatch alone carries the color identity, backed by a 1px dark ring so
+pale swatches still read as a distinct shape.
+
+Verified: `ringRect` unit tests (nesting shrinks/shifts correctly,
+`baseInset` offsets uniformly, returns null once a cell's too small).
+`primeFacts.test.ts` sweeps several primes confirming every fact id
+maps to one consistent depth/color regardless of which prime carries
+it, the two mutually-exclusive groups share depths, and the 7
+independently-co-occurring categories all get distinct depths. In
+browser: selecting 5 (six simultaneous facts) shows six visibly nested
+rings inside the blue border with 6 distinct swatch colors in the
+panel; a `getImageData` scan of 11's cell (both 5's sexy-prime partner
+and its Sophie Germain partner 2×5+1) confirmed both the yellow and
+magenta ring colors are actually present in its pixels, not just one
+overwriting the other.

@@ -1,5 +1,12 @@
 import {describe, expect, it} from 'vitest';
-import {hitTestAt, selectionScreenRect, findVisibleSelection, canvasSizeForRows, type Selection} from './view';
+import {
+  hitTestAt,
+  selectionScreenRect,
+  findVisibleSelection,
+  ringRect,
+  canvasSizeForRows,
+  type Selection,
+} from './view';
 import {makeCamera, panBy, zoomBy, type Camera} from './camera';
 
 const ROWS = 9;
@@ -112,5 +119,38 @@ describe('findVisibleSelection', () => {
     expect(found).not.toBeNull();
     const rect = selectionScreenRect(ROWS, SIZE, camera, found!, 0, 0);
     expect(rect).not.toBeNull();
+  });
+});
+
+describe('ringRect', () => {
+  const cell = {x: 100, y: 100, size: 64};
+
+  it('depth 0 with no base inset sits flush with the cell (a related highlight\'s first ring)', () => {
+    expect(ringRect(cell, 0, 0)).toEqual(cell);
+  });
+
+  it('each deeper depth nests further in by a fixed gap, staying centered', () => {
+    const r0 = ringRect(cell, 0, 0)!;
+    const r1 = ringRect(cell, 1, 0)!;
+    const r2 = ringRect(cell, 2, 0)!;
+    expect(r1.x).toBeGreaterThan(r0.x);
+    expect(r1.size).toBeLessThan(r0.size);
+    expect(r2.x).toBeGreaterThan(r1.x);
+    expect(r2.size).toBeLessThan(r1.size);
+    // Centered: inset grows equally on every side.
+    expect(r1.x - r0.x).toBeCloseTo((r0.size - r1.size) / 2, 9);
+  });
+
+  it('baseInset shifts every depth in uniformly (room for the selected cell\'s own blue ring)', () => {
+    const withoutBase = ringRect(cell, 2, 0)!;
+    const withBase = ringRect(cell, 2, 5)!;
+    expect(withBase.x).toBe(withoutBase.x + 5);
+    expect(withBase.size).toBe(withoutBase.size - 10);
+  });
+
+  it('returns null once nesting has eaten the whole cell (a tiny on-screen cell)', () => {
+    const tiny = {x: 0, y: 0, size: 4};
+    expect(ringRect(tiny, 0, 0)).not.toBeNull(); // still fits
+    expect(ringRect(tiny, 5, 0)).toBeNull(); // 5 gaps of 3px each blows past a 4px cell
   });
 });

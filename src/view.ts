@@ -131,10 +131,43 @@ export interface Selection {
   readonly gen: number;
 }
 
-interface ScreenRect {
+export interface ScreenRect {
   readonly x: number;
   readonly y: number;
   readonly size: number;
+}
+
+/** A single concentric-ring border: which fact category it represents
+ * (color) and its fixed position in the nesting order (depth — see
+ * PrimeFact.depth in primeFacts.ts for why this is a category identity,
+ * not an array index). */
+export interface RingHighlight {
+  readonly color: string;
+  readonly depth: number;
+}
+
+/** A ring highlight for a cell other than the primary selection — needs
+ * its own screen position, since it can be anywhere in the visible rows. */
+export interface RelatedRingHighlight extends RingHighlight {
+  readonly selection: Selection;
+}
+
+/** Fixed screen-space gap between concentric rings, in canvas px. */
+const RING_GAP_PX = 3;
+
+/**
+ * Insets `rect` for a ring at `depth` (0 = flush with `rect` itself, 1 =
+ * one gap further in, ...), offset by `baseInset` first — used to leave
+ * room for the selected cell's own outer blue "this is selected" ring,
+ * which related-highlight cells don't have. Returns null once nesting
+ * has eaten the whole cell (a small on-screen cell only fits so many
+ * rings), so the caller can just skip drawing it.
+ */
+export function ringRect(rect: ScreenRect, depth: number, baseInset: number): ScreenRect | null {
+  const inset = baseInset + depth * RING_GAP_PX;
+  const size = rect.size - inset * 2;
+  if (size <= 0) return null;
+  return {x: rect.x + inset, y: rect.y + inset, size};
 }
 
 /**
@@ -384,7 +417,8 @@ export class CameraRenderer {
     overscrollXPixels = 0,
     overscrollZoomOut = 0,
     selected: Selection | null = null,
-    related: readonly Selection[] = [],
+    selectedRings: readonly RingHighlight[] = [],
+    relatedRings: readonly RelatedRingHighlight[] = [],
   ): void {
     this.ensureBuffer(camera.origin, camera.bottomGen);
 
@@ -411,16 +445,28 @@ export class CameraRenderer {
     ctx.lineWidth = 1;
     ctx.strokeRect(0.5, 0.5, size - 1, size - 1);
 
-    // Related highlights (e.g. a twin-prime partner) draw first, in a
-    // lighter amber, so the primary blue selection always reads as the
-    // more prominent one even where they'd overlap.
-    for (const rel of related) {
-      const rect = selectionScreenRect(this.rows, this.canvasSize, camera, rel, overscrollXPixels, overscrollZoomOut);
-      if (rect) {
-        ctx.strokeStyle = '#f59e0b';
-        ctx.lineWidth = 2;
-        ctx.strokeRect(rect.x, rect.y, rect.size, rect.size);
-      }
+    // Related highlights (e.g. a twin-prime partner) draw first, so the
+    // primary blue selection always reads as the more prominent one even
+    // where they'd overlap. Each fact category gets its own ring color at
+    // its own fixed depth (see primeFacts.ts) — a cell related through
+    // multiple facts gets one concentric ring per fact, not one flat
+    // highlight, since that's the whole point of tracking depth per
+    // category rather than per how-many-facts-this-prime-happens-to-have.
+    for (const ring of relatedRings) {
+      const rect = selectionScreenRect(
+        this.rows,
+        this.canvasSize,
+        camera,
+        ring.selection,
+        overscrollXPixels,
+        overscrollZoomOut,
+      );
+      if (!rect) continue;
+      const inset = ringRect(rect, ring.depth, 0);
+      if (!inset) continue;
+      ctx.strokeStyle = ring.color;
+      ctx.lineWidth = 2;
+      ctx.strokeRect(inset.x, inset.y, inset.size, inset.size);
     }
 
     if (selected) {
@@ -436,6 +482,16 @@ export class CameraRenderer {
         ctx.strokeStyle = '#2563eb';
         ctx.lineWidth = 3;
         ctx.strokeRect(rect.x, rect.y, rect.size, rect.size);
+
+        // The selected prime's own category rings nest just inside the
+        // blue selection border (baseInset leaves it room), one per fact.
+        for (const ring of selectedRings) {
+          const inset = ringRect(rect, ring.depth, RING_GAP_PX);
+          if (!inset) continue;
+          ctx.strokeStyle = ring.color;
+          ctx.lineWidth = 2;
+          ctx.strokeRect(inset.x, inset.y, inset.size, inset.size);
+        }
       }
     }
   }
